@@ -1,45 +1,36 @@
 ﻿/*
- * visibility_graph.hpp – Header-only 2-D visibility graph.
+ * a_star_planner.hpp – Environment model for the AStarPlanner library.
  *
  * ────
- * Core features
- *   • Naïve O(N³) obstacle-only build, query-time insertion of S & G.
- *   • Segment-intersection tests plus “same-polygon chord” rejection.
- *   • Optional convex operation area with convex obstacle clipping.
- *   • Convex polygon normalization and validation.
- *   • Polygon-size validation (skips <3-vertex obstacles with a warning).
- *
- * Example (see main_demo.cpp):
- *   vg::VisibilityGraph vg(obstacles);
- *   vg.buildBasic();
- *   auto ids  = vg.injectQueryPts(S,G);
- *   auto path = vg.shortestPath(ids.first, ids.second);
+ * This first conversion checkpoint retains the polygon and operation-area
+ * model from VisGraphPlanner. Grid construction and A* search will be added in
+ * a later step. The former visibility-graph planner is disabled below so it
+ * cannot accidentally remain part of the active AStarPlanner implementation.
  * ────
  */
 #pragma once
 
 #include <algorithm>
-#include <cassert>
 #include <Eigen/Core>
 #include <cmath>
 #include <cstddef>
-#include <functional>
 #include <iostream>
-#include <limits>
-#include <queue>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
-namespace vg
+namespace astar
 {
-    // Geometry and graph component types.
+    // Public world-coordinate geometry types.
     using Point2 = Eigen::Vector2d;
-    using Polygon = std::vector<Point2>;   // Ordered vertices; validated by VisibilityGraph.
+    using Polygon = std::vector<Point2>;   // Ordered vertices; validated by AStarPlanner.
     struct Segment2 { Point2 a, b; };
+
+#if 0 // Legacy visibility-graph-only types; retained temporarily for reference.
     struct Edge { std::size_t to; double cost; };
     struct Vertex { Point2 pos; int poly_id; bool is_query; };
+#endif
 
     // Base relative tolerance used by scale-aware geometric predicates.
     inline constexpr double EPS = 1e-12;
@@ -53,26 +44,18 @@ namespace vg
     enum class PointLocation { Outside, OnEdge, Inside };
 
     /**
-     * @class VisibilityGraph
-     * @brief Obstacle visibility graph supporting query-time terminal insertion.
-     *
-     * Intended lifecycle: construct, call buildBasic(), inject a start/goal
-     * pair, then call shortestPath(). Each call to injectQueryPts() replaces
-     * the previous query pair while preserving the obstacle-only graph.
-     *
-     * @note The class provides no internal synchronization. Concurrent
-     * read-only access is safe only while no thread is calling buildBasic() or
-     * injectQueryPts().
+     * @class AStarPlanner
+     * @brief Validated polygon environment for future grid-based A* planning.
      */
-    class VisibilityGraph
+    class AStarPlanner
     {
     public:
         /**
          * @brief Construct from a list of convex, simple polygons.
          *
          * Finite obstacle polygons with <3 vertices are skipped with a warning.
-         * Valid polygons are normalized before their effective vertices are
-         * added to the graph. Polygons are converted to counter-clockwise
+         * Valid polygons are normalized before their effective geometry is
+         * retained. Polygons are converted to counter-clockwise
          * order. A repeated closing point, consecutive duplicates, and
          * redundant collinear boundary points are removed. Non-finite,
          * self-intersecting, degenerate, and concave polygons are rejected.
@@ -83,13 +66,13 @@ namespace vg
          * coordinates or, after the undersized-input filter, is
          * self-intersecting, degenerate, or concave.
          */
-        explicit VisibilityGraph(const std::vector<Polygon>& obstacles)
+        explicit AStarPlanner(const std::vector<Polygon>& obstacles)
         {
             initializeObstacles(obstacles);
         }
 
         /**
-         * @brief Construct a graph constrained to a convex operation area.
+         * @brief Construct an environment constrained to a convex operation area.
          *
          * Start and goal queries must be strictly inside @p operationArea.
          * Obstacles are clipped to the operation area. Obstacles wholly
@@ -102,7 +85,7 @@ namespace vg
          * non-simple, degenerate, or concave, or if an obstacle fails the same
          * validation after the undersized-input filter.
          */
-        VisibilityGraph(const Polygon& operationArea,
+        AStarPlanner(const Polygon& operationArea,
             const std::vector<Polygon>& obstacles)
             : _hasOperationArea(true)
         {
@@ -111,6 +94,7 @@ namespace vg
             initializeObstacles(obstacles);
         }
 
+#if 0 // Legacy visibility-graph planning API; intentionally disabled.
         /**
          * @brief Build the obstacle-only visibility graph (O(N³)).
          *
@@ -264,6 +248,7 @@ namespace vg
             std::reverse(path.begin(), path.end());
             return path;
         }
+#endif
 
         // Read-only getters
         bool hasOperationArea() const { return _hasOperationArea; }
@@ -271,7 +256,7 @@ namespace vg
         const Polygon& operationArea() const
         {
             if (!_hasOperationArea)
-                throw std::logic_error("operationArea: graph has no operation area");
+                throw std::logic_error("operationArea: planner has no operation area");
             return _operationArea;
         }
 
@@ -282,8 +267,9 @@ namespace vg
         // Positive-area effective obstacles whose geometry changed during clipping.
         const std::vector<Polygon>& clippedObstacles() const { return _clippedObstacles; }
 
-        // Effective obstacles used to construct the visibility graph.
+        // Effective obstacles available to the future occupancy-grid builder.
         const std::vector<Polygon>& obstacles() const { return _obstacles; }
+#if 0 // Legacy visibility-graph inspection API; intentionally disabled.
         const std::vector<Vertex>& vertices()  const { return _vertices; }
         const std::vector<std::vector<Edge>>& adjacency() const { return _adjacency; }
         
@@ -293,6 +279,7 @@ namespace vg
             for (auto& nbrs : _adjacency) half += nbrs.size();
             return half / 2;
         }
+#endif
 
     private:
 
@@ -306,8 +293,6 @@ namespace vg
          */
         void initializeObstacles(const std::vector<Polygon>& obstacles)
         {
-            std::size_t reserveN = 0;
-
             for (const auto& poly : obstacles)
             {
                 for (const auto& point : poly)
@@ -315,12 +300,12 @@ namespace vg
                     if (!isFinite(point))
                     {
                         throw std::invalid_argument(
-                            "VisibilityGraph: obstacle contains a non-finite coordinate");
+                            "AStarPlanner: obstacle contains a non-finite coordinate");
                     }
                 }
                 if (poly.size() < 3)
                 {
-                    std::cerr << "[VG] Warning: polygon with " << poly.size()
+                    std::cerr << "[AStarPlanner] Warning: polygon with " << poly.size()
                               << " vertex/vertices ignored (need >=3).\n";
                     continue;
                 }
@@ -344,27 +329,8 @@ namespace vg
                     _clippedObstacles.push_back(effectiveObstacle);
                 }
 
-                reserveN += effectiveObstacle.size();
                 _obstacles.push_back(std::move(effectiveObstacle));
             }
-
-            _vertices.reserve(reserveN);
-            _adjacency.reserve(reserveN);
-
-            for (std::size_t pid = 0; pid < _obstacles.size(); ++pid)
-            {
-                for (const auto& pt : _obstacles[pid])
-                {
-                    if (_hasOperationArea &&
-                        pointInPolygon(pt, _operationArea) == PointLocation::OnEdge)
-                    {
-                        continue;
-                    }
-                    addVertex(pt, /*query=*/false, static_cast<int>(pid));
-                }
-            }
-
-            _obstacleVertexCount = _vertices.size();
         }
 
         static double pointTolerance(const Point2& lhs, const Point2& rhs)
@@ -451,7 +417,7 @@ namespace vg
                 if (!std::isfinite(point.x()) || !std::isfinite(point.y()))
                 {
                     throw std::invalid_argument(
-                        std::string("VisibilityGraph: ") + polygonRole +
+                        std::string("AStarPlanner: ") + polygonRole +
                         " contains a non-finite coordinate");
                 }
             }
@@ -493,13 +459,13 @@ namespace vg
             if (normalized.size() < 3)
             {
                 throw std::invalid_argument(
-                    std::string("VisibilityGraph: ") + polygonRole +
+                    std::string("AStarPlanner: ") + polygonRole +
                     " has fewer than three distinct non-collinear vertices");
             }
             if (!isSimplePolygon(normalized))
             {
                 throw std::invalid_argument(
-                    std::string("VisibilityGraph: ") + polygonRole +
+                    std::string("AStarPlanner: ") + polygonRole +
                     " must be simple and non-self-intersecting");
             }
 
@@ -507,7 +473,7 @@ namespace vg
             if (std::abs(area) <= polygonAreaTolerance(normalized))
             {
                 throw std::invalid_argument(
-                    std::string("VisibilityGraph: ") + polygonRole +
+                    std::string("AStarPlanner: ") + polygonRole +
                     " must have nonzero area");
             }
             if (area < 0.0)
@@ -516,7 +482,7 @@ namespace vg
             if (!isConvexCounterClockwise(normalized))
             {
                 throw std::invalid_argument(
-                    std::string("VisibilityGraph: ") + polygonRole +
+                    std::string("AStarPlanner: ") + polygonRole +
                     " must be convex");
             }
             return normalized;
@@ -673,12 +639,15 @@ namespace vg
         std::vector<Polygon>              _originalObstacles;
         std::vector<Polygon>              _clippedObstacles;
         std::vector<Polygon>              _obstacles; // Effective obstacle geometry.
+#if 0 // Legacy visibility-graph storage; intentionally disabled.
         std::vector<Vertex>               _vertices;  // Obstacle vertices plus active queries.
         std::vector<std::vector<Edge>>    _adjacency; // Neighbors for each active vertex.
         std::vector<std::vector<Edge>>    _obstacleAdjacency; // Cached obstacle-only graph.
         std::size_t                       _obstacleVertexCount = 0;
         bool                              _isBuilt = false;
+#endif
 
+#if 0 // Legacy visibility-graph construction and visibility tests.
         /**
          * @brief Removes query vertices and restores cached obstacle-only edges.
          */
@@ -789,6 +758,7 @@ namespace vg
                 if (visible(i, q))
                     addEdge(i, q);
         }
+#endif
 
 
         /**
@@ -907,5 +877,5 @@ namespace vg
             return inside ? PointLocation::Inside : PointLocation::Outside;
         }
     };
-} // namespace vg
+} // namespace astar
 
