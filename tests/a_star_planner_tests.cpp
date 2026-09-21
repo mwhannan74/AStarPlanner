@@ -4,6 +4,7 @@
  */
 
 #include "a_star_planner.hpp"
+#include "a_star_grid_planner.hpp"
 #include "grid_line.hpp"
 #include "occupancy_grid.hpp"
 
@@ -21,9 +22,11 @@
 namespace
 {
     using astar::AStarPlanner;
+    using astar::AStarGridPlanner;
     using astar::CellState;
     using astar::GridCell;
     using astar::GridGeometry;
+    using astar::GridPlanStatus;
     using astar::GridRegion;
     using astar::OccupancyGrid;
     using astar::Point2;
@@ -670,6 +673,56 @@ namespace
             "reversing endpoints should reverse the rasterized line");
     }
 
+    void bootstrapPlannerReturnsRasterizedLine()
+    {
+        const OccupancyGrid grid(
+            GridGeometry(Point2(0.0, 0.0), 1.0, 6, 4),
+            CellState::Free);
+        const AStarGridPlanner planner;
+
+        const auto result = planner.plan(grid, { 0, 0 }, { 5, 2 });
+        require(result.succeeded(),
+            "bootstrap planner should succeed for terminals inside the grid");
+        require(result.path == rasterizeGridLine({ 0, 0 }, { 5, 2 }),
+            "bootstrap planner should return the reusable rasterized line");
+    }
+
+    void bootstrapPlannerHandlesCoincidentTerminals()
+    {
+        const OccupancyGrid grid(
+            GridGeometry(Point2(-2.0, 3.0), 0.5, 3, 3),
+            CellState::Free);
+        const AStarGridPlanner planner;
+
+        const auto result = planner.plan(grid, { 1, 2 }, { 1, 2 });
+        require(result.status == GridPlanStatus::Success,
+            "coincident terminals inside the grid should succeed");
+        require(result.path == std::vector<GridCell>{ { 1, 2 } },
+            "coincident terminals should return a one-cell path");
+    }
+
+    void bootstrapPlannerValidatesBoundsButIgnoresOccupancy()
+    {
+        const OccupancyGrid occupiedGrid(
+            GridGeometry(Point2(0.0, 0.0), 1.0, 4, 4),
+            CellState::Occupied);
+        const AStarGridPlanner planner;
+
+        const auto occupiedResult = planner.plan(occupiedGrid, { 0, 0 }, { 3, 3 });
+        require(occupiedResult.succeeded() && !occupiedResult.path.empty(),
+            "bootstrap planner should intentionally ignore occupancy in this stage");
+
+        const auto invalidStart = planner.plan(occupiedGrid, { -1, 0 }, { 3, 3 });
+        require(invalidStart.status == GridPlanStatus::StartOutsideGrid &&
+                invalidStart.path.empty(),
+            "planner should reject a start cell outside the planning grid");
+
+        const auto invalidGoal = planner.plan(occupiedGrid, { 0, 0 }, { 4, 3 });
+        require(invalidGoal.status == GridPlanStatus::GoalOutsideGrid &&
+                invalidGoal.path.empty(),
+            "planner should reject a goal cell outside the planning grid");
+    }
+
     struct TestCase
     {
         const char* name;
@@ -711,7 +764,10 @@ namespace
         { "Grid line rasterizes axis-aligned segments", gridLineRasterizesAxisAlignedSegments },
         { "Grid line rasterizes diagonal segments", gridLineRasterizesDiagonalAndCoincidentSegments },
         { "Grid line rasterizes shallow and steep segments", gridLineRasterizesShallowAndSteepSegments },
-        { "Grid line is reversible", gridLineIsReversible }
+        { "Grid line is reversible", gridLineIsReversible },
+        { "Bootstrap planner returns rasterized line", bootstrapPlannerReturnsRasterizedLine },
+        { "Bootstrap planner handles coincident terminals", bootstrapPlannerHandlesCoincidentTerminals },
+        { "Bootstrap planner validates grid bounds", bootstrapPlannerValidatesBoundsButIgnoresOccupancy }
     };
 }
 
