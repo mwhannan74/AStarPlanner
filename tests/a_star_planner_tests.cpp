@@ -4,6 +4,7 @@
  */
 
 #include "a_star_planner.hpp"
+#include "grid_line.hpp"
 #include "occupancy_grid.hpp"
 
 #include <chrono>
@@ -30,6 +31,7 @@ namespace
     using astar::PolygonRasterizer;
     using astar::SubgridStorage;
     using astar::WorldBounds;
+    using astar::rasterizeGridLine;
 
     constexpr double TEST_EPSILON = 1e-9;
 
@@ -615,6 +617,59 @@ namespace
             "nested local-to-master conversion should include every window offset");
     }
 
+    void gridLineRasterizesAxisAlignedSegments()
+    {
+        const std::vector<GridCell> horizontal{
+            { 1, 2 }, { 2, 2 }, { 3, 2 }, { 4, 2 }
+        };
+        const std::vector<GridCell> verticalReverse{
+            { 3, 3 }, { 3, 2 }, { 3, 1 }, { 3, 0 }
+        };
+
+        require(rasterizeGridLine({ 1, 2 }, { 4, 2 }) == horizontal,
+            "horizontal line should include every cell and both endpoints");
+        require(rasterizeGridLine({ 3, 3 }, { 3, 0 }) == verticalReverse,
+            "reverse vertical line should preserve start-to-goal ordering");
+    }
+
+    void gridLineRasterizesDiagonalAndCoincidentSegments()
+    {
+        const std::vector<GridCell> diagonal{
+            { -1, 1 }, { 0, 2 }, { 1, 3 }, { 2, 4 }
+        };
+
+        require(rasterizeGridLine({ -1, 1 }, { 2, 4 }) == diagonal,
+            "diagonal line should advance one column and row per cell");
+        require(rasterizeGridLine({ 5, -2 }, { 5, -2 }) ==
+                std::vector<GridCell>{ { 5, -2 } },
+            "coincident endpoints should produce exactly one cell");
+    }
+
+    void gridLineRasterizesShallowAndSteepSegments()
+    {
+        const std::vector<GridCell> shallow{
+            { 0, 0 }, { 1, 0 }, { 2, 1 }, { 3, 1 }, { 4, 2 }, { 5, 2 }
+        };
+        const std::vector<GridCell> steep{
+            { 0, 0 }, { 0, 1 }, { 1, 2 }, { 1, 3 }, { 2, 4 }, { 2, 5 }
+        };
+
+        require(rasterizeGridLine({ 0, 0 }, { 5, 2 }) == shallow,
+            "shallow line should select the expected discrete cells");
+        require(rasterizeGridLine({ 0, 0 }, { 2, 5 }) == steep,
+            "steep line should select the expected discrete cells");
+    }
+
+    void gridLineIsReversible()
+    {
+        const std::vector<GridCell> forward = rasterizeGridLine({ -3, 4 }, { 4, 1 });
+        std::vector<GridCell> reverse = rasterizeGridLine({ 4, 1 }, { -3, 4 });
+        std::reverse(reverse.begin(), reverse.end());
+
+        require(forward == reverse,
+            "reversing endpoints should reverse the rasterized line");
+    }
+
     struct TestCase
     {
         const char* name;
@@ -652,7 +707,11 @@ namespace
         { "Subgrid preserves coordinates", subgridPreservesWorldAndMasterCoordinates },
         { "Copied subgrid owns independent pixels", copiedSubgridOwnsIndependentPixels },
         { "World bounds produce rounded subgrid", worldBoundsProduceOutwardRoundedSubgrid },
-        { "Nested subgrids retain master offset", nestedSubgridsRetainMasterOffset }
+        { "Nested subgrids retain master offset", nestedSubgridsRetainMasterOffset },
+        { "Grid line rasterizes axis-aligned segments", gridLineRasterizesAxisAlignedSegments },
+        { "Grid line rasterizes diagonal segments", gridLineRasterizesDiagonalAndCoincidentSegments },
+        { "Grid line rasterizes shallow and steep segments", gridLineRasterizesShallowAndSteepSegments },
+        { "Grid line is reversible", gridLineIsReversible }
     };
 }
 
