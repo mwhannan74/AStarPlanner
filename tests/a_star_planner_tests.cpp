@@ -1,9 +1,10 @@
 /*
- * Environment-model tests for the AStarPlanner conversion checkpoint.
- * Grid construction and A* path planning are intentionally not active yet.
+ * Environment-model and occupancy-grid tests for AStarPlanner.
+ * A* path planning is intentionally not active yet.
  */
 
 #include "a_star_planner.hpp"
+#include "occupancy_grid.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -19,8 +20,16 @@
 namespace
 {
     using astar::AStarPlanner;
+    using astar::CellState;
+    using astar::GridCell;
+    using astar::GridGeometry;
+    using astar::GridRegion;
+    using astar::OccupancyGrid;
     using astar::Point2;
     using astar::Polygon;
+    using astar::PolygonRasterizer;
+    using astar::SubgridStorage;
+    using astar::WorldBounds;
 
     constexpr double TEST_EPSILON = 1e-9;
 
@@ -263,6 +272,349 @@ namespace
             "normalization should preserve translated polygon coordinates");
     }
 
+    void gridGeometryConvertsBetweenCoordinateFrames()
+    {
+        const GridGeometry geometry(Point2(-2.0, 3.0), 0.5, 4, 3);
+
+        const auto lowerLeft = geometry.worldToCell(Point2(-1.9, 3.1));
+        require(lowerLeft && *lowerLeft == GridCell{ 0, 0 },
+            "lower-left world point should map to the first Cartesian cell");
+        require(geometry.cellToImage(*lowerLeft) == cv::Point(0, 2),
+            "lower-left Cartesian cell should map to the bottom OpenCV row");
+        require(geometry.imageToCell(cv::Point(0, 2)) == lowerLeft,
+            "image-to-cell conversion should invert cell-to-image conversion");
+        require(pointsNear(geometry.cellCenterToWorld({ 0, 0 }), Point2(-1.75, 3.25)),
+            "cell center should include the translated world origin");
+
+        const cv::Point2d imageCenter = geometry.worldToImage(Point2(-1.75, 3.25));
+        require(std::abs(imageCenter.x) <= TEST_EPSILON &&
+                std::abs(imageCenter.y - 2.0) <= TEST_EPSILON,
+            "world cell center should map to an integer OpenCV pixel center");
+        require(pointsNear(geometry.imageToWorld(imageCenter), Point2(-1.75, 3.25)),
+            "continuous world/image conversion should round trip");
+    }
+
+    void gridGeometryUsesHalfOpenWorldBounds()
+    {
+        const GridGeometry geometry(Point2(10.0, -4.0), 1.0, 3, 2);
+
+        require(geometry.worldToCell(Point2(10.0, -4.0)) == GridCell{ 0, 0 },
+            "minimum world boundary should be included");
+        require(!geometry.worldToCell(Point2(13.0, -3.0)),
+            "maximum x boundary should be excluded");
+        require(!geometry.worldToCell(Point2(11.0, -2.0)),
+            "maximum y boundary should be excluded");
+        require(!geometry.worldToCell(Point2(9.999, -3.0)),
+            "point below the minimum x boundary should be excluded");
+        requireThrows<std::out_of_range>(
+            [&geometry] { static_cast<void>(geometry.cellCenterToWorld({ 3, 0 })); },
+            "cell-to-world conversion should reject an out-of-bounds cell");
+    }
+
+    void coveringGeometryRoundsExtentUpToWholeCells()
+    {
+        const GridGeometry geometry = GridGeometry::covering(
+            WorldBounds{ Point2(-1.0, 2.0), Point2(1.1, 3.01) }, 0.5);
+
+        require(geometry.width() == 5 && geometry.height() == 3,
+            "covering geometry should round each extent upward");
+        require(pointsNear(geometry.worldMaximum(), Point2(1.5, 3.5)),
+            "covering geometry should expose its snapped world maximum");
+    }
+
+    void invalidGridGeometryIsRejected()
+    {
+        requireThrows<std::invalid_argument>(
+            [] { GridGeometry geometry(Point2(0.0, 0.0), 0.0, 2, 2); },
+            "zero resolution should be rejected");
+        requireThrows<std::invalid_argument>(
+            [] { GridGeometry geometry(Point2(0.0, 0.0), 1.0, 0, 2); },
+            "zero width should be rejected");
+        requireThrows<std::invalid_argument>(
+            []
+            {
+                GridGeometry::covering(
+                    WorldBounds{ Point2(1.0, 0.0), Point2(0.0, 1.0) }, 1.0);
+            },
+            "reversed world bounds should be rejected");
+    }
+
+    void alignedCoveringUsesStableWorldLattice()
+    {
+        const WorldBounds bounds{ Point2(-0.2, 0.2), Point2(2.2, 2.2) };
+        const GridGeometry geometry = GridGeometry::alignedCovering(bounds, 1.0);
+
+        require(pointsNear(geometry.worldOrigin(), Point2(-1.0, 0.0)),
+            "aligned covering should snap its origin down to the anchor lattice");
+        require(geometry.width() == 4 && geometry.height() == 3,
+            "aligned covering should extend upward to contain the requested bounds");
+        require(pointsNear(geometry.worldMaximum(), Point2(3.0, 3.0)),
+            "aligned covering should end on the same world lattice");
+
+        const GridGeometry shifted = GridGeometry::alignedCovering(
+            bounds, 1.0, Point2(0.5, 0.5));
+        require(pointsNear(shifted.worldOrigin(), Point2(-0.5, -0.5)),
+            "custom alignment anchor should shift the grid lattice");
+    }
+
+    void polygonBoundsCanSizeRectangularMaps()
+    {
+        const Polygon polygon{
+            Point2(-2.0, 3.0), Point2(5.1, 3.0),
+            Point2(5.1, 4.2), Point2(-2.0, 4.2)
+        };
+        const GridGeometry geometry = GridGeometry::covering(polygon, 0.5);
+
+        require(geometry.width() == 15 && geometry.height() == 3,
+            "polygon bounds should create a rectangular grid without forcing a square");
+        require(pointsNear(geometry.worldOrigin(), Point2(-2.0, 3.0)),
+            "polygon covering should preserve the bounding-box minimum as origin");
+    }
+
+    void unconstrainedRasterizationMarksIntersectingCells()
+    {
+        const GridGeometry geometry(Point2(0.0, 0.0), 1.0, 4, 4);
+        const Polygon obstacle{
+            Point2(0.75, 0.75), Point2(1.25, 0.75),
+            Point2(1.25, 1.25), Point2(0.75, 1.25)
+        };
+
+        const OccupancyGrid grid = PolygonRasterizer::rasterize(geometry, { obstacle });
+        require(grid.at({ 0, 0 }) == CellState::Occupied,
+            "obstacle crossing a cell corner should occupy the cell");
+        require(grid.at({ 1, 0 }) == CellState::Occupied,
+            "obstacle should occupy every intersected cell");
+        require(grid.at({ 0, 1 }) == CellState::Occupied,
+            "obstacle should occupy every intersected row");
+        require(grid.at({ 1, 1 }) == CellState::Occupied,
+            "obstacle should occupy all four intersected cells");
+        require(grid.isTraversable({ 2, 2 }),
+            "cell outside the obstacle should remain traversable");
+        require(!grid.isTraversable({ -1, 0 }),
+            "out-of-bounds cell should never be traversable");
+    }
+
+    void occupancyGridSupportsUniformInitialization()
+    {
+        const GridGeometry geometry(Point2(-2.0, 4.0), 0.5, 3, 2);
+        const OccupancyGrid freeGrid(geometry, CellState::Free);
+        const OccupancyGrid occupiedGrid(geometry, CellState::Occupied);
+
+        for (int row = 0; row < geometry.height(); ++row)
+        {
+            for (int column = 0; column < geometry.width(); ++column)
+            {
+                const GridCell cell{ column, row };
+                require(freeGrid.at(cell) == CellState::Free,
+                    "free initialization should set every grid cell to free");
+                require(occupiedGrid.at(cell) == CellState::Occupied,
+                    "occupied initialization should set every grid cell to occupied");
+            }
+        }
+
+        require(cv::countNonZero(freeGrid.image()) == 0,
+            "free initialization should fill the OpenCV image with zero");
+        require(cv::countNonZero(occupiedGrid.image()) ==
+                geometry.width() * geometry.height(),
+            "occupied initialization should fill every OpenCV image pixel");
+    }
+
+    void operationAreaRequiresWholeCellContainment()
+    {
+        const GridGeometry geometry(Point2(0.0, 0.0), 1.0, 3, 3);
+        const Polygon operationArea{
+            Point2(0.25, 0.25), Point2(2.75, 0.25),
+            Point2(2.75, 2.75), Point2(0.25, 2.75)
+        };
+
+        const OccupancyGrid grid =
+            PolygonRasterizer::rasterize(geometry, operationArea, {});
+        require(grid.isTraversable({ 1, 1 }),
+            "cell wholly inside the operation area should be traversable");
+        require(grid.at({ 0, 0 }) == CellState::Occupied,
+            "cell crossing the operation-area boundary should remain occupied");
+        require(grid.at({ 2, 2 }) == CellState::Occupied,
+            "boundary rule should apply at every side of the operation area");
+    }
+
+    void obstacleBoundaryContactIsConservativelyOccupied()
+    {
+        const GridGeometry geometry(Point2(0.0, 0.0), 1.0, 3, 2);
+        const Polygon obstacle{
+            Point2(1.0, 0.2), Point2(1.2, 0.2),
+            Point2(1.2, 0.8), Point2(1.0, 0.8)
+        };
+
+        const OccupancyGrid grid = PolygonRasterizer::rasterize(geometry, { obstacle });
+        require(grid.at({ 0, 0 }) == CellState::Occupied,
+            "cell touched by an obstacle boundary should be occupied");
+        require(grid.at({ 1, 0 }) == CellState::Occupied,
+            "cell containing obstacle area should be occupied");
+        require(grid.isTraversable({ 2, 0 }),
+            "unrelated cell should remain free");
+    }
+
+    void obstacleOutsideGridLeavesMapFree()
+    {
+        const GridGeometry geometry(Point2(0.0, 0.0), 1.0, 2, 2);
+        const Polygon obstacle{
+            Point2(1e12, 1e12), Point2(1e12 + 10000.0, 1e12),
+            Point2(1e12 + 10000.0, 1e12 + 10000.0), Point2(1e12, 1e12 + 10000.0)
+        };
+
+        const OccupancyGrid grid = PolygonRasterizer::rasterize(geometry, { obstacle });
+        require(grid.isTraversable({ 0, 0 }) && grid.isTraversable({ 1, 1 }),
+            "obstacle outside the grid should not affect occupancy");
+    }
+
+    void obstacleOverridesOperationAreaFreeSpace()
+    {
+        const GridGeometry geometry(Point2(0.0, 0.0), 1.0, 3, 3);
+        const Polygon operationArea{
+            Point2(0.0, 0.0), Point2(3.0, 0.0),
+            Point2(3.0, 3.0), Point2(0.0, 3.0)
+        };
+        const Polygon obstacle{
+            Point2(1.1, 1.1), Point2(1.9, 1.1),
+            Point2(1.9, 1.9), Point2(1.1, 1.9)
+        };
+
+        const OccupancyGrid grid =
+            PolygonRasterizer::rasterize(geometry, operationArea, { obstacle });
+        require(grid.at({ 1, 1 }) == CellState::Occupied,
+            "obstacle should override operation-area free space");
+        require(grid.isTraversable({ 0, 0 }),
+            "whole cells inside the operation area should remain free");
+        require(grid.image().rows == 3 && grid.image().cols == 3,
+            "OpenCV image dimensions should match grid dimensions");
+    }
+
+    void operationAreaCanBuildAlignedMasterGrid()
+    {
+        const Polygon operationArea{
+            Point2(0.2, 0.2), Point2(3.7, 0.2),
+            Point2(3.7, 2.6), Point2(0.2, 2.6)
+        };
+        const OccupancyGrid master = PolygonRasterizer::rasterize(
+            operationArea, {}, 1.0);
+
+        require(pointsNear(master.geometry().worldOrigin(), Point2(0.0, 0.0)),
+            "master grid should align the operation area to the world lattice");
+        require(master.width() == 4 && master.height() == 3,
+            "master grid should cover the complete operation-area bounding box");
+        require(master.at({ 0, 0 }) == CellState::Occupied,
+            "partial boundary cells should remain occupied in the master grid");
+        require(master.isTraversable({ 1, 1 }),
+            "whole cells inside the operation area should be free");
+    }
+
+    void validatedEnvironmentFeedsMasterRasterization()
+    {
+        const Polygon operationArea{
+            Point2(0.0, 0.0), Point2(4.0, 0.0),
+            Point2(4.0, 4.0), Point2(0.0, 4.0)
+        };
+        const Polygon crossingObstacle{
+            Point2(3.0, 1.0), Point2(5.0, 1.0),
+            Point2(5.0, 3.0), Point2(3.0, 3.0)
+        };
+        const AStarPlanner planner(operationArea, { crossingObstacle });
+
+        const OccupancyGrid master = PolygonRasterizer::rasterize(
+            planner.operationArea(), planner.obstacles(), 1.0);
+
+        require(master.width() == 4 && master.height() == 4,
+            "validated operation area should determine master dimensions");
+        require(master.isTraversable({ 0, 0 }),
+            "free operation-area cells should remain traversable");
+        require(master.at({ 3, 1 }) == CellState::Occupied,
+            "clipped effective obstacle should be present in the master grid");
+    }
+
+    void subgridPreservesWorldAndMasterCoordinates()
+    {
+        const GridGeometry geometry(Point2(-2.0, 3.0), 0.5, 6, 5);
+        const OccupancyGrid master(geometry, CellState::Free);
+        const GridRegion region{ { 1, 1 }, 3, 2 };
+        const OccupancyGrid window = master.subgrid(region);
+
+        require(window.width() == 3 && window.height() == 2,
+            "subgrid dimensions should match the selected master region");
+        require(pointsNear(window.geometry().worldOrigin(), Point2(-1.5, 3.5)),
+            "subgrid origin should match its lower-left master cell");
+        require(window.masterCellOffset() == GridCell{ 1, 1 },
+            "subgrid should retain its master-cell offset");
+        require(window.localToMaster({ 2, 1 }) == GridCell{ 3, 2 },
+            "local cells should convert to master cells");
+        require(window.masterToLocal({ 3, 2 }) == GridCell{ 2, 1 },
+            "master cells should convert back to local cells");
+        require(!window.masterToLocal({ 0, 0 }),
+            "master cell outside the window should not have a local cell");
+        require(pointsNear(
+                window.geometry().cellCenterToWorld({ 0, 0 }),
+                master.geometry().cellCenterToWorld({ 1, 1 })),
+            "local and master cells should represent the same world position");
+
+        const int masterImageRow = master.height() - (region.lowerLeft.row + region.height);
+        require(window.image().data ==
+                master.image().ptr(masterImageRow) + region.lowerLeft.column,
+            "default subgrid should share the selected OpenCV ROI storage");
+    }
+
+    void copiedSubgridOwnsIndependentPixels()
+    {
+        const GridGeometry geometry(Point2(0.0, 0.0), 1.0, 4, 4);
+        const OccupancyGrid master(geometry, CellState::Occupied);
+        const GridRegion region{ { 1, 1 }, 2, 2 };
+        const OccupancyGrid copy = master.subgrid(
+            region, SubgridStorage::IndependentCopy);
+
+        require(copy.image().data != master.image().data,
+            "copied subgrid should own independent OpenCV storage");
+        require(cv::countNonZero(copy.image()) == 4,
+            "copied subgrid should preserve occupancy values");
+    }
+
+    void worldBoundsProduceOutwardRoundedSubgrid()
+    {
+        const OccupancyGrid master(
+            GridGeometry(Point2(0.0, 0.0), 1.0, 6, 5),
+            CellState::Free);
+        const WorldBounds requested{ Point2(1.2, 0.4), Point2(4.0, 3.1) };
+
+        const GridRegion region = master.regionCovering(requested);
+        require(region == GridRegion{ { 1, 0 }, 3, 4 },
+            "world bounds should round outward to complete master cells");
+
+        const OccupancyGrid window = master.subgrid(requested);
+        require(pointsNear(window.geometry().worldOrigin(), Point2(1.0, 0.0)),
+            "world-bounds subgrid should use the rounded lower-left cell origin");
+        require(window.width() == 3 && window.height() == 4,
+            "world-bounds subgrid should use the rounded cell dimensions");
+
+        requireThrows<std::out_of_range>(
+            [&master]
+            {
+                static_cast<void>(master.subgrid(
+                    WorldBounds{ Point2(-0.1, 0.0), Point2(2.0, 2.0) }));
+            },
+            "subgrid bounds outside the master should be rejected");
+    }
+
+    void nestedSubgridsRetainMasterOffset()
+    {
+        const OccupancyGrid master(
+            GridGeometry(Point2(0.0, 0.0), 1.0, 8, 8),
+            CellState::Free);
+        const OccupancyGrid first = master.subgrid({ { 2, 1 }, 5, 6 });
+        const OccupancyGrid nested = first.subgrid({ { 1, 2 }, 2, 3 });
+
+        require(nested.masterCellOffset() == GridCell{ 3, 3 },
+            "nested subgrid offsets should remain relative to the original master");
+        require(nested.localToMaster({ 1, 2 }) == GridCell{ 4, 5 },
+            "nested local-to-master conversion should include every window offset");
+    }
+
     struct TestCase
     {
         const char* name;
@@ -282,7 +634,25 @@ namespace
         { "Crossing obstacle is clipped", crossingObstacleIsClipped },
         { "Zero-area boundary contact is discarded", zeroAreaBoundaryContactIsDiscarded },
         { "Containing obstacle clips to operation area", containingObstacleClipsToOperationArea },
-        { "Translated small polygon retains area", translatedSmallPolygonRetainsArea }
+        { "Translated small polygon retains area", translatedSmallPolygonRetainsArea },
+        { "Grid geometry converts coordinate frames", gridGeometryConvertsBetweenCoordinateFrames },
+        { "Grid geometry uses half-open bounds", gridGeometryUsesHalfOpenWorldBounds },
+        { "Covering geometry rounds extents up", coveringGeometryRoundsExtentUpToWholeCells },
+        { "Invalid grid geometry is rejected", invalidGridGeometryIsRejected },
+        { "Aligned covering uses stable world lattice", alignedCoveringUsesStableWorldLattice },
+        { "Polygon bounds size rectangular maps", polygonBoundsCanSizeRectangularMaps },
+        { "Occupancy grid supports uniform initialization", occupancyGridSupportsUniformInitialization },
+        { "Rasterization marks intersecting cells", unconstrainedRasterizationMarksIntersectingCells },
+        { "Operation area requires whole-cell containment", operationAreaRequiresWholeCellContainment },
+        { "Obstacle boundary contact is occupied", obstacleBoundaryContactIsConservativelyOccupied },
+        { "Obstacle outside grid leaves map free", obstacleOutsideGridLeavesMapFree },
+        { "Obstacle overrides operation area", obstacleOverridesOperationAreaFreeSpace },
+        { "Operation area builds aligned master grid", operationAreaCanBuildAlignedMasterGrid },
+        { "Validated environment feeds master rasterization", validatedEnvironmentFeedsMasterRasterization },
+        { "Subgrid preserves coordinates", subgridPreservesWorldAndMasterCoordinates },
+        { "Copied subgrid owns independent pixels", copiedSubgridOwnsIndependentPixels },
+        { "World bounds produce rounded subgrid", worldBoundsProduceOutwardRoundedSubgrid },
+        { "Nested subgrids retain master offset", nestedSubgridsRetainMasterOffset }
     };
 }
 

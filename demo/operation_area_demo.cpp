@@ -2,6 +2,8 @@
 
 #include "a_star_planner.hpp"
 #include "a_star_planner_visualization.hpp"
+#include "occupancy_grid.hpp"
+#include "occupancy_grid_visualization.hpp"
 
 #include <iostream>
 #include <string>
@@ -60,15 +62,40 @@ int main(int argc, char* argv[])
     const Point2 start(5.0, 8.0);
     const Point2 goal(95.0, 52.0);
     AStarPlanner planner(operationArea, obstacles);
+    constexpr double gridResolution = 2.0;
+    const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
+        planner.operationArea(),
+        planner.obstacles(),
+        gridResolution);
 
     std::cout << "Input obstacles: " << obstacles.size() << '\n';
     std::cout << "Effective obstacles after clipping: "
               << planner.obstacles().size() << '\n';
     std::cout << "Clipped obstacle overlays: "
               << planner.clippedObstacles().size() << '\n';
+    std::cout << "Master occupancy grid: "
+              << masterGrid.width() << " x " << masterGrid.height()
+              << " cells at " << masterGrid.geometry().resolution()
+              << " world units per cell\n";
 
     const std::string outputFile = argc > 1 ? argv[1] : "";
     visualize(planner, start, goal, 1200, outputFile);
+
+    const auto startCell = masterGrid.geometry().worldToCell(start);
+    const auto goalCell = masterGrid.geometry().worldToCell(goal);
+    if (!startCell || !goalCell)
+    {
+        std::cerr << "Start or goal is outside the occupancy grid\n";
+        return 1;
+    }
+
+    OccupancyGridRenderOptions gridView;
+    gridView.pixelsPerCell = 8;
+    gridView.markers = {
+        { *startCell, cv::Scalar(0, 180, 0) },
+        { *goalCell, cv::Scalar(0, 0, 255) }
+    };
+    showOccupancyGrid(masterGrid, gridView, "AStarPlanner Occupancy Grid");
     cv::waitKey(0);
     return 0;
 }

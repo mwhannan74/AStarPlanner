@@ -5,18 +5,26 @@
 AStarPlanner is being developed as a header-only C++17 library for A* path
 planning on two-dimensional occupancy grids.
 
-## Current conversion checkpoint
+## Current development checkpoint
 
 The repository began as a copy of VisGraphPlanner. The active code currently
-provides the reusable environment model while the grid and A* implementation
-are being designed. It supports:
+provides the reusable environment and occupancy-grid model while A* search is
+being designed. It supports:
 
 - Eigen world-coordinate points and polygon obstacles
 - convex polygon normalization and validation
 - an optional convex operation area
 - clipping obstacles to the operation area
 - separate original, clipped, and effective obstacle views
+- an OpenCV-backed binary occupancy grid
+- world, Cartesian-grid, and OpenCV-image coordinate conversion
+- explicit cell-sized, world-bounds-sized, and polygon-sized grids
+- optional alignment to a stable world-coordinate lattice
+- conservative obstacle rasterization
+- whole-cell containment within the operation area
+- master maps with shared or independently copied planning subgrids
 - optional environment visualization through MatPlotOpenCV
+- direct OpenCV occupancy-grid visualization
 
 The former visibility-graph construction, query-vertex injection, adjacency
 model, and Dijkstra search are disabled. This checkpoint does not calculate or
@@ -39,11 +47,15 @@ Polygon holes and overlapping-obstacle validation are not supported.
 
 - CMake 3.16 or newer
 - A C++17 compiler
-- [Eigen](https://eigen.tuxfamily.org/) for the core environment model
+- [Eigen](https://eigen.tuxfamily.org/) for world-coordinate geometry
+- OpenCV 4.5 or newer for occupancy-grid storage
 - [MatPlotOpenCV](https://github.com/mwhannan74/MatPlotOpenCV) for visualization and demos
-- OpenCV as required by MatPlotOpenCV
 
-The core `a_star_planner.hpp` header does not depend on MatPlotOpenCV or OpenCV.
+The environment-only `a_star_planner.hpp` header does not include OpenCV.
+The occupancy-grid API is provided by `occupancy_grid.hpp`.
+Generic grid rendering is provided separately by
+`occupancy_grid_visualization.hpp`; planner/environment plotting remains in
+`a_star_planner_visualization.hpp`.
 
 ## Configure and build
 
@@ -51,6 +63,7 @@ Default local dependency paths are defined in `cmake/local_paths.cmake`:
 
 - `ASTAR_PLANNER_EIGEN3_INCLUDE_DIR`
 - `ASTAR_PLANNER_MPOCV_SOURCE_DIR`
+- `ASTAR_PLANNER_OPENCV_DIR`
 
 Configure and build all targets on Windows with a multi-configuration generator:
 
@@ -68,7 +81,7 @@ cmake --build build --config Release
 
 ## Tests
 
-Run the environment-model tests directly:
+Run the environment and occupancy-grid tests directly:
 
 ```powershell
 .\build\Release\a_star_planner_tests.exe
@@ -82,19 +95,21 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Demos
 
-The two demos visualize the retained environment state. They intentionally do
-not construct a grid or calculate a path yet.
+The two demos visualize both the retained polygon environment and its generated
+occupancy grid. They intentionally do not calculate a path yet.
 
 ```powershell
 .\build\Release\a_star_planner_demo.exe
 .\build\Release\operation_area_demo.exe
 ```
 
-The first demo shows a randomized field of polygon obstacles. The second shows
-the operation-area boundary, original obstacles, and clipped obstacle overlays.
-Both show start and goal markers for continuity with the future planner display.
-Pass an optional image filename as the first argument to save the rendered
-figure before its window is displayed.
+The first demo builds an explicit world-aligned rectangular grid around a
+randomized field of polygon obstacles. The second builds a master grid directly
+from the operation area's bounding box, frees whole cells inside that area, and
+then overlays the effective obstacles. Both display the polygon view and a raw
+OpenCV occupancy-grid view with start and goal markers. Pass an optional image
+filename as the first argument to save the polygon figure before its windows are
+displayed.
 
 <p align="center">
   <img src="images/a_star_planner_demo.png"
@@ -110,8 +125,9 @@ figure before its window is displayed.
 
 ## CMake targets
 
-- `AStarPlanner::astar_planner` — header-only environment model
-- `AStarPlanner::astar_planner_visualization` — optional MatPlotOpenCV plotting
+- `AStarPlanner::astar_planner` — header-only environment and occupancy-grid model
+- `AStarPlanner::astar_occupancy_grid_visualization` — reusable OpenCV grid rendering
+- `AStarPlanner::astar_planner_visualization` — optional planner and grid visualization support
 - `a_star_planner_tests` — deterministic environment tests
 - `a_star_planner_demo` — unconstrained-environment demo
 - `operation_area_demo` — operation-area and clipping demo
@@ -120,6 +136,7 @@ figure before its window is displayed.
 
 ```cpp
 #include "a_star_planner.hpp"
+#include "occupancy_grid.hpp"
 
 #include <vector>
 
@@ -136,10 +153,27 @@ int main()
         }
     };
 
-    AStarPlanner planner(obstacles);
-    return planner.obstacles().empty() ? 1 : 0;
+    const Polygon operationArea{
+        Point2(-2.0, -2.0), Point2(8.0, -2.0),
+        Point2(8.0, 8.0), Point2(-2.0, 8.0)
+    };
+    AStarPlanner planner(operationArea, obstacles);
+
+    OccupancyGrid master = PolygonRasterizer::rasterize(
+        planner.operationArea(), planner.obstacles(), 0.5);
+    OccupancyGrid planningWindow = master.subgrid(
+        WorldBounds{ Point2(-1.0, -1.0), Point2(6.0, 6.0) });
+
+    return planningWindow.isTraversable({ 0, 0 }) ? 0 : 1;
 }
 ```
+
+`GridGeometry(origin, resolution, width, height)` provides explicit cell-sized
+maps. `GridGeometry::covering(...)` derives rectangular cell dimensions from
+world bounds or polygon bounds. `GridGeometry::alignedCovering(...)` additionally
+keeps cell boundaries on a stable world lattice. A planning subgrid uses the
+master resolution and records its cumulative master-cell offset; it can either
+share an OpenCV ROI or own an independent copy.
 
 ## License
 

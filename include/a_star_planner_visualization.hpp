@@ -19,8 +19,8 @@ namespace astar
      * @brief Visualize the retained polygon environment and terminal points.
      *
      * Draws the operation-area boundary when present, followed by obstacle
-     * polygons and the start/goal markers. Occupancy-grid and path layers will
-     * be added when the grid-based planner is implemented.
+     * polygons and the start/goal markers. Path layers will be added when the
+     * grid-based planner is implemented.
      *
      * @param planner   Environment to render.
      * @param start     Start query point.

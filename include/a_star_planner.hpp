@@ -2,10 +2,11 @@
  * a_star_planner.hpp – Environment model for the AStarPlanner library.
  *
  * ────
- * This first conversion checkpoint retains the polygon and operation-area
- * model from VisGraphPlanner. Grid construction and A* search will be added in
- * a later step. The former visibility-graph planner is disabled below so it
- * cannot accidentally remain part of the active AStarPlanner implementation.
+ * This conversion retains the polygon and operation-area model from
+ * VisGraphPlanner. Occupancy-grid construction is provided separately by
+ * occupancy_grid.hpp; A* search will be added in a later step. The former
+ * visibility-graph planner is disabled below so it cannot accidentally remain
+ * part of the active AStarPlanner implementation.
  * ────
  */
 #pragma once
@@ -45,7 +46,7 @@ namespace astar
 
     /**
      * @class AStarPlanner
-     * @brief Validated polygon environment for future grid-based A* planning.
+     * @brief Validated polygon environment for grid-based A* planning.
      */
     class AStarPlanner
     {
