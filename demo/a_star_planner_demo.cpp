@@ -2,6 +2,7 @@
 // Build with the a_star_planner_demo CMake target; see README.md for instructions.
 
 #include "a_star_planner.hpp"
+#include "a_star_grid_planner.hpp"
 #include "a_star_planner_visualization.hpp"
 #include "occupancy_grid.hpp"
 #include "occupancy_grid_visualization.hpp"
@@ -81,6 +82,16 @@ int main(int argc, char* argv[])
         mapBounds, gridResolution);
     const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
         gridGeometry, planner.obstacles());
+    const double planningPadding = 0.5 * gridResolution;
+    const OccupancyGrid planningGrid = masterGrid.subgrid(
+        WorldBounds{
+            Point2(
+                std::min(start.x(), goal.x()) - planningPadding,
+                std::min(start.y(), goal.y()) - planningPadding),
+            Point2(
+                std::max(start.x(), goal.x()) + planningPadding,
+                std::max(start.y(), goal.y()) + planningPadding)
+        });
 
     std::cout << "Environment has " << planner.obstacles().size()
               << " effective obstacles\n";
@@ -88,24 +99,41 @@ int main(int argc, char* argv[])
               << masterGrid.width() << " x " << masterGrid.height()
               << " cells at " << masterGrid.geometry().resolution()
               << " world units per cell\n";
+    std::cout << "Planning ROI: "
+              << planningGrid.width() << " x " << planningGrid.height()
+              << " cells, master offset ("
+              << planningGrid.masterCellOffset().column << ", "
+              << planningGrid.masterCellOffset().row << ")\n";
     const std::string outputFile = argc > 1 ? argv[1] : "";
     visualize(planner, start, goal, 1200, outputFile);
 
-    const auto startCell = masterGrid.geometry().worldToCell(start);
-    const auto goalCell = masterGrid.geometry().worldToCell(goal);
+    const auto startCell = planningGrid.geometry().worldToCell(start);
+    const auto goalCell = planningGrid.geometry().worldToCell(goal);
     if (!startCell || !goalCell)
     {
-        std::cerr << "Start or goal is outside the occupancy grid\n";
+        std::cerr << "Start or goal is outside the planning ROI\n";
+        return 1;
+    }
+
+    const AStarGridPlanner gridPlanner;
+    const GridPlanResult plan = gridPlanner.plan(
+        planningGrid, *startCell, *goalCell);
+    if (!plan.succeeded())
+    {
+        std::cerr << "Bootstrap grid planner failed\n";
         return 1;
     }
 
     OccupancyGridRenderOptions gridView;
     gridView.pixelsPerCell = 8;
-    gridView.markers = {
-        { *startCell, cv::Scalar(0, 180, 0) },
-        { *goalCell, cv::Scalar(0, 0, 255) }
-    };
-    showOccupancyGrid(masterGrid, gridView, "AStarPlanner Occupancy Grid");
+    for (const GridCell& cell : plan.path)
+        gridView.markers.push_back({ cell, cv::Scalar(255, 120, 0), 2 });
+    gridView.markers.push_back({ *startCell, cv::Scalar(0, 180, 0), 3 });
+    gridView.markers.push_back({ *goalCell, cv::Scalar(0, 0, 255), 3 });
+
+    std::cout << "Bootstrap straight-line path: "
+              << plan.path.size() << " cells\n";
+    showOccupancyGrid(planningGrid, gridView, "AStarPlanner Planning ROI");
 
     cv::waitKey(0);
     return 0;

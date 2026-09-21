@@ -723,6 +723,55 @@ namespace
             "planner should reject a goal cell outside the planning grid");
     }
 
+    void bootstrapPlanningPipelineUsesRoiLocalCoordinates()
+    {
+        const Polygon operationArea{
+            Point2(0.0, 0.0), Point2(10.0, 0.0),
+            Point2(10.0, 10.0), Point2(0.0, 10.0)
+        };
+        const Polygon obstacle{
+            Point2(4.0, 4.0), Point2(5.0, 4.0),
+            Point2(5.0, 5.0), Point2(4.0, 5.0)
+        };
+        const AStarPlanner environment(operationArea, { obstacle });
+        const OccupancyGrid master = PolygonRasterizer::rasterize(
+            environment.operationArea(), environment.obstacles(), 1.0);
+        const OccupancyGrid planningGrid = master.subgrid(
+            WorldBounds{ Point2(2.0, 1.0), Point2(8.0, 9.0) });
+
+        const Point2 worldStart(2.5, 1.5);
+        const Point2 worldGoal(7.5, 8.5);
+        const auto start = planningGrid.geometry().worldToCell(worldStart);
+        const auto goal = planningGrid.geometry().worldToCell(worldGoal);
+        require(start == GridCell{ 0, 0 } && goal == GridCell{ 5, 7 },
+            "world terminals should convert to planning-ROI-local cells");
+
+        const AStarGridPlanner planner;
+        const auto result = planner.plan(planningGrid, *start, *goal);
+        require(result.succeeded() && result.path.front() == *start &&
+                result.path.back() == *goal,
+            "planner result should retain the ROI-local start and goal cells");
+        require(planningGrid.localToMaster(result.path.front()) == GridCell{ 2, 1 } &&
+                planningGrid.localToMaster(result.path.back()) == GridCell{ 7, 8 },
+            "ROI-local result cells should map back to the correct master cells");
+        require(pointsNear(
+                planningGrid.geometry().cellCenterToWorld(result.path.front()),
+                worldStart) &&
+                pointsNear(
+                    planningGrid.geometry().cellCenterToWorld(result.path.back()),
+                    worldGoal),
+            "planner result endpoints should map back to their world positions");
+
+        const bool crossesOccupiedCell = std::any_of(
+            result.path.begin(), result.path.end(),
+            [&planningGrid](const GridCell& cell)
+            {
+                return !planningGrid.isTraversable(cell);
+            });
+        require(crossesOccupiedCell,
+            "bootstrap path should expose that obstacle avoidance is not active yet");
+    }
+
     struct TestCase
     {
         const char* name;
@@ -767,7 +816,8 @@ namespace
         { "Grid line is reversible", gridLineIsReversible },
         { "Bootstrap planner returns rasterized line", bootstrapPlannerReturnsRasterizedLine },
         { "Bootstrap planner handles coincident terminals", bootstrapPlannerHandlesCoincidentTerminals },
-        { "Bootstrap planner validates grid bounds", bootstrapPlannerValidatesBoundsButIgnoresOccupancy }
+        { "Bootstrap planner validates grid bounds", bootstrapPlannerValidatesBoundsButIgnoresOccupancy },
+        { "Bootstrap planning pipeline uses ROI coordinates", bootstrapPlanningPipelineUsesRoiLocalCoordinates }
     };
 }
 

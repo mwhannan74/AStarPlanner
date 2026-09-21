@@ -27,8 +27,9 @@ being designed. It supports:
 - direct OpenCV occupancy-grid visualization
 
 The former visibility-graph construction, query-vertex injection, adjacency
-model, and Dijkstra search are disabled. This checkpoint does not calculate or
-display a path.
+model, and Dijkstra search are disabled. The bootstrap grid planner currently
+returns and displays a straight rasterized line; obstacle-avoiding A* search is
+not active yet.
 
 ## Assumptions and validation
 
@@ -96,7 +97,8 @@ ctest --test-dir build -C Release --output-on-failure
 ## Demos
 
 The two demos visualize both the retained polygon environment and its generated
-occupancy grid. They intentionally do not calculate a path yet.
+occupancy grid. The deterministic operation-area demo also exercises a cropped
+planning ROI and displays the bootstrap planner's straight-line result.
 
 ```powershell
 .\build\Release\a_star_planner_demo.exe
@@ -106,10 +108,10 @@ occupancy grid. They intentionally do not calculate a path yet.
 The first demo builds an explicit world-aligned rectangular grid around a
 randomized field of polygon obstacles. The second builds a master grid directly
 from the operation area's bounding box, frees whole cells inside that area, and
-then overlays the effective obstacles. Both display the polygon view and a raw
-OpenCV occupancy-grid view with start and goal markers. Pass an optional image
-filename as the first argument to save the polygon figure before its windows are
-displayed.
+then overlays the effective obstacles. Both demos crop a planning ROI, call the
+bootstrap planner, and display its straight rasterized result with start and
+goal markers. Pass an optional image filename as the first argument to save the
+polygon figure before its windows are displayed.
 
 <p align="center">
   <img src="images/a_star_planner_demo.png"
