@@ -144,8 +144,10 @@ int main(int argc, char* argv[])
     // share this planner and use eight-connected movement here.
     const AStarGridPlanner gridPlanner;
     AStarOptions options;
-    options.algorithm = GridSearchAlgorithm::WeightedAStar;
-    options.heuristicWeight = 2.0;
+    //options.algorithm = GridSearchAlgorithm::Dijkstra;
+    options.algorithm = GridSearchAlgorithm::AStar;
+    //options.algorithm = GridSearchAlgorithm::WeightedAStar;
+    options.heuristicWeight = 2.0; // only used by WeightedAStar
 
     GridSearchDebugCallback debugCallback;
     if (debugVisualizationEnabled)

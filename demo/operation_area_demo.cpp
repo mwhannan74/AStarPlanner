@@ -158,7 +158,8 @@ int main(int argc, char* argv[])
     // inside the complete master grid.
     const AStarGridPlanner gridPlanner;
     AStarOptions options;
-    options.algorithm = GridSearchAlgorithm::Dijkstra;
+    //options.algorithm = GridSearchAlgorithm::Dijkstra;
+    options.algorithm = GridSearchAlgorithm::AStar;
 
     GridSearchDebugCallback debugCallback;
     if (debugVisualizationEnabled)
