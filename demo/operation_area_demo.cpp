@@ -127,8 +127,7 @@ int main(int argc, char* argv[])
 
     OccupancyGridRenderOptions gridView;
     gridView.pixelsPerCell = 8;
-    for (const GridCell& cell : plan.path)
-        gridView.markers.push_back({ cell, cv::Scalar(255, 120, 0), 2 });
+    gridView.paths.push_back({ plan.path, cv::Scalar(255, 120, 0), 2 });
     gridView.markers.push_back({ *startCell, cv::Scalar(0, 180, 0), 3 });
     gridView.markers.push_back({ *goalCell, cv::Scalar(0, 0, 255), 3 });
 

@@ -28,6 +28,7 @@ reusable environment model, occupancy grid, and initial A* planner. It supports:
 - explicit planning outcomes for invalid terminals and unreachable goals
 - optional environment visualization through MatPlotOpenCV
 - direct OpenCV occupancy-grid visualization
+- efficient OpenCV polyline overlays for ordered grid paths
 
 The former visibility-graph construction, query-vertex injection, adjacency
 model, and Dijkstra search are disabled. The grid planner provides basic A*

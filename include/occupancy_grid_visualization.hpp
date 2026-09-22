@@ -23,11 +23,19 @@ namespace astar
         int radiusPixels = 0;
     };
 
+    struct OccupancyGridPath
+    {
+        std::vector<GridCell> cells;
+        cv::Scalar color;
+        int thicknessPixels = 2;
+    };
+
     struct OccupancyGridRenderOptions
     {
         int pixelsPerCell = 8;
         bool drawCellBorders = true;
         cv::Scalar cellBorderColor{ 210, 210, 210 };
+        std::vector<OccupancyGridPath> paths;
         std::vector<OccupancyGridMarker> markers;
     };
 
@@ -89,6 +97,56 @@ namespace astar
             }
         }
 
+        const auto cellCenter = [&grid, &options](const GridCell& cell)
+        {
+            const cv::Point pixel = grid.geometry().cellToImage(cell);
+            return cv::Point(
+                pixel.x * options.pixelsPerCell + options.pixelsPerCell / 2,
+                pixel.y * options.pixelsPerCell + options.pixelsPerCell / 2);
+        };
+
+        for (const OccupancyGridPath& path : options.paths)
+        {
+            if (path.thicknessPixels <= 0)
+            {
+                throw std::invalid_argument(
+                    "renderOccupancyGrid: path thickness must be positive");
+            }
+
+            std::vector<cv::Point> imagePath;
+            imagePath.reserve(path.cells.size());
+            for (const GridCell& cell : path.cells)
+            {
+                if (!grid.contains(cell))
+                {
+                    throw std::out_of_range(
+                        "renderOccupancyGrid: path cell is outside the grid");
+                }
+                imagePath.push_back(cellCenter(cell));
+            }
+
+            if (imagePath.size() >= 2)
+            {
+                cv::polylines(
+                    display,
+                    imagePath,
+                    false,
+                    path.color,
+                    path.thicknessPixels,
+                    cv::LINE_AA);
+            }
+            else if (imagePath.size() == 1)
+            {
+                cv::circle(
+                    display,
+                    imagePath.front(),
+                    std::max(1, path.thicknessPixels / 2),
+                    path.color,
+                    cv::FILLED,
+                    cv::LINE_AA);
+            }
+        }
+
         for (const OccupancyGridMarker& marker : options.markers)
         {
             if (!grid.contains(marker.cell))
@@ -102,16 +160,12 @@ namespace astar
                     "renderOccupancyGrid: marker radius cannot be negative");
             }
 
-            const cv::Point pixel = grid.geometry().cellToImage(marker.cell);
-            const cv::Point center(
-                pixel.x * options.pixelsPerCell + options.pixelsPerCell / 2,
-                pixel.y * options.pixelsPerCell + options.pixelsPerCell / 2);
             const int radius = marker.radiusPixels > 0
                 ? marker.radiusPixels
                 : std::max(2, options.pixelsPerCell / 3);
             cv::circle(
                 display,
-                center,
+                cellCenter(marker.cell),
                 radius,
                 marker.color,
                 cv::FILLED,
