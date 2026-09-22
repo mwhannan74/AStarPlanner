@@ -20,18 +20,19 @@
 
 namespace
 {
-    using astar::AStarPlanner;
     using astar::AStarGridPlanner;
     using astar::AStarOptions;
     using astar::CellState;
     using astar::GridCell;
     using astar::GridGeometry;
     using astar::GridConnectivity;
+    using astar::GridPlanResult;
     using astar::GridPlanStatus;
     using astar::GridRegion;
     using astar::OccupancyGrid;
     using astar::Point2;
     using astar::Polygon;
+    using astar::PolygonEnvironment;
     using astar::PolygonRasterizer;
     using astar::SubgridStorage;
     using astar::WorldBounds;
@@ -181,10 +182,10 @@ namespace
 
     void emptyEnvironmentIsAccepted()
     {
-        const AStarPlanner planner({});
+        const PolygonEnvironment planner({});
         require(!planner.hasOperationArea(), "unconstrained environment should have no operation area");
-        require(planner.originalObstacles().empty(), "empty input should retain no obstacles");
-        require(planner.obstacles().empty(), "empty input should produce no effective obstacles");
+        require(planner.normalizedObstacles().empty(), "empty input should retain no obstacles");
+        require(planner.effectiveObstacles().empty(), "empty input should produce no effective obstacles");
         requireThrows<std::logic_error>(
             [&planner] { static_cast<void>(planner.operationArea()); },
             "operationArea should reject access when none is configured");
@@ -197,9 +198,9 @@ namespace
             Point2(4.0, 4.0), Point2(4.0, 0.0)
         };
 
-        const AStarPlanner planner({ clockwiseSquare });
-        require(planner.obstacles().size() == 1, "valid obstacle should be retained");
-        require(signedAreaTwice(planner.obstacles().front()) > 0.0,
+        const PolygonEnvironment planner({ clockwiseSquare });
+        require(planner.effectiveObstacles().size() == 1, "valid obstacle should be retained");
+        require(signedAreaTwice(planner.effectiveObstacles().front()) > 0.0,
             "obstacle should be normalized to counter-clockwise winding");
     }
 
@@ -211,8 +212,8 @@ namespace
             Point2(0.0, 0.0)
         };
 
-        const AStarPlanner planner({ redundantRectangle });
-        require(planner.obstacles().front().size() == 4,
+        const PolygonEnvironment planner({ redundantRectangle });
+        require(planner.effectiveObstacles().front().size() == 4,
             "normalization should remove duplicate and collinear boundary vertices");
     }
 
@@ -233,13 +234,13 @@ namespace
         };
 
         requireThrows<std::invalid_argument>(
-            [&concave] { AStarPlanner planner({ concave }); },
+            [&concave] { PolygonEnvironment planner({ concave }); },
             "concave obstacle should be rejected");
         requireThrows<std::invalid_argument>(
-            [&selfIntersecting] { AStarPlanner planner({ selfIntersecting }); },
+            [&selfIntersecting] { PolygonEnvironment planner({ selfIntersecting }); },
             "self-intersecting obstacle should be rejected");
         requireThrows<std::invalid_argument>(
-            [&nonFinite] { AStarPlanner planner({ nonFinite }); },
+            [&nonFinite] { PolygonEnvironment planner({ nonFinite }); },
             "non-finite obstacle should be rejected");
     }
 
@@ -248,11 +249,11 @@ namespace
         const Polygon line{ Point2(0.0, 0.0), Point2(1.0, 1.0) };
         std::ostringstream capturedErrors;
         std::streambuf* previousErrors = std::cerr.rdbuf(capturedErrors.rdbuf());
-        const AStarPlanner planner({ line });
+        const PolygonEnvironment planner({ line });
         std::cerr.rdbuf(previousErrors);
 
-        require(planner.originalObstacles().empty(), "undersized obstacle should not be retained");
-        require(planner.obstacles().empty(), "undersized obstacle should not become effective geometry");
+        require(planner.normalizedObstacles().empty(), "undersized obstacle should not be retained");
+        require(planner.effectiveObstacles().empty(), "undersized obstacle should not become effective geometry");
         require(capturedErrors.str().empty(),
             "ignoring an undersized obstacle should not write to standard error");
     }
@@ -264,7 +265,7 @@ namespace
             Point2(10.0, 10.0), Point2(10.0, 0.0)
         };
 
-        const AStarPlanner planner(clockwiseArea, {});
+        const PolygonEnvironment planner(clockwiseArea, {});
         require(planner.hasOperationArea(), "operation area should be recorded");
         require(signedAreaTwice(planner.operationArea()) > 0.0,
             "operation area should be normalized to counter-clockwise winding");
@@ -278,7 +279,7 @@ namespace
         };
 
         requireThrows<std::invalid_argument>(
-            [&concaveArea] { AStarPlanner planner(concaveArea, {}); },
+            [&concaveArea] { PolygonEnvironment planner(concaveArea, {}); },
             "concave operation area should be rejected");
     }
 
@@ -289,9 +290,9 @@ namespace
             Point2(4.0, 4.0), Point2(2.0, 4.0)
         };
 
-        const AStarPlanner planner(makeOperationArea(), { obstacle });
-        require(planner.originalObstacles().size() == 1, "original obstacle should be retained");
-        require(planner.obstacles().size() == 1, "contained obstacle should remain effective");
+        const PolygonEnvironment planner(makeOperationArea(), { obstacle });
+        require(planner.normalizedObstacles().size() == 1, "normalized obstacle should be retained");
+        require(planner.effectiveObstacles().size() == 1, "contained obstacle should remain effective");
         require(planner.clippedObstacles().empty(), "unchanged obstacle should not be a clipped overlay");
     }
 
@@ -302,9 +303,9 @@ namespace
             Point2(14.0, 4.0), Point2(12.0, 4.0)
         };
 
-        const AStarPlanner planner(makeOperationArea(), { obstacle });
-        require(planner.originalObstacles().size() == 1, "outside obstacle should remain in original view");
-        require(planner.obstacles().empty(), "outside obstacle should be absent from effective geometry");
+        const PolygonEnvironment planner(makeOperationArea(), { obstacle });
+        require(planner.normalizedObstacles().size() == 1, "outside obstacle should remain in normalized view");
+        require(planner.effectiveObstacles().empty(), "outside obstacle should be absent from effective geometry");
         require(planner.clippedObstacles().empty(), "empty intersection should not create a clipped overlay");
     }
 
@@ -315,10 +316,10 @@ namespace
             Point2(12.0, 8.0), Point2(8.0, 8.0)
         };
 
-        const AStarPlanner planner(makeOperationArea(), { obstacle });
-        require(planner.obstacles().size() == 1, "positive-area intersection should remain effective");
+        const PolygonEnvironment planner(makeOperationArea(), { obstacle });
+        require(planner.effectiveObstacles().size() == 1, "positive-area intersection should remain effective");
         require(planner.clippedObstacles().size() == 1, "changed geometry should be exposed as clipped");
-        for (const auto& point : planner.obstacles().front())
+        for (const auto& point : planner.effectiveObstacles().front())
         {
             require(point.x() >= -TEST_EPSILON && point.x() <= 10.0 + TEST_EPSILON &&
                     point.y() >= -TEST_EPSILON && point.y() <= 10.0 + TEST_EPSILON,
@@ -333,8 +334,8 @@ namespace
             Point2(12.0, 4.0), Point2(10.0, 4.0)
         };
 
-        const AStarPlanner planner(makeOperationArea(), { obstacle });
-        require(planner.obstacles().empty(), "line-only boundary contact should not be effective geometry");
+        const PolygonEnvironment planner(makeOperationArea(), { obstacle });
+        require(planner.effectiveObstacles().empty(), "line-only boundary contact should not be effective geometry");
     }
 
     void containingObstacleClipsToOperationArea()
@@ -344,10 +345,10 @@ namespace
             Point2(15.0, 15.0), Point2(-5.0, 15.0)
         };
 
-        const AStarPlanner planner(makeOperationArea(), { obstacle });
-        require(planner.obstacles().size() == 1, "containing obstacle should have an effective intersection");
+        const PolygonEnvironment planner(makeOperationArea(), { obstacle });
+        require(planner.effectiveObstacles().size() == 1, "containing obstacle should have an effective intersection");
         require(planner.clippedObstacles().size() == 1, "containing obstacle should be reported as clipped");
-        require(planner.obstacles().front().size() == 4, "clipped result should match rectangular operation area");
+        require(planner.effectiveObstacles().front().size() == 4, "clipped result should match rectangular operation area");
     }
 
     void translatedSmallPolygonRetainsArea()
@@ -358,10 +359,10 @@ namespace
             Point2(offset + 0.01, offset + 0.01), Point2(offset, offset + 0.01)
         };
 
-        const AStarPlanner planner({ obstacle });
-        require(planner.obstacles().size() == 1,
+        const PolygonEnvironment planner({ obstacle });
+        require(planner.effectiveObstacles().size() == 1,
             "small polygon at large translated coordinates should remain valid");
-        require(pointsNear(planner.obstacles().front().front(), obstacle.front()),
+        require(pointsNear(planner.effectiveObstacles().front().front(), obstacle.front()),
             "normalization should preserve translated polygon coordinates");
     }
 
@@ -686,10 +687,10 @@ namespace
             Point2(3.0, 1.0), Point2(5.0, 1.0),
             Point2(5.0, 3.0), Point2(3.0, 3.0)
         };
-        const AStarPlanner planner(operationArea, { crossingObstacle });
+        const PolygonEnvironment planner(operationArea, { crossingObstacle });
 
         const OccupancyGrid master = PolygonRasterizer::rasterize(
-            planner.operationArea(), planner.obstacles(), 1.0);
+            planner.operationArea(), planner.effectiveObstacles(), 1.0);
 
         require(master.width() == 4 && master.height() == 4,
             "validated operation area should determine master dimensions");
@@ -843,6 +844,27 @@ namespace
             "planner should reject a goal cell outside the planning grid");
     }
 
+    void gridPlanResultHasSafeDefaultState()
+    {
+        const GridPlanResult result;
+        require(result.status == GridPlanStatus::NoPath && result.path.empty(),
+            "default planning result should be a deterministic unsuccessful result");
+    }
+
+    void aStarRejectsUnsupportedConnectivity()
+    {
+        const OccupancyGrid grid(
+            GridGeometry(Point2(0.0, 0.0), 1.0, 2, 2),
+            CellState::Free);
+        const AStarGridPlanner planner;
+        AStarOptions options;
+        options.connectivity = static_cast<GridConnectivity>(99);
+
+        requireThrows<std::invalid_argument>(
+            [&] { static_cast<void>(planner.plan(grid, { 0, 0 }, { 1, 1 }, options)); },
+            "planner should reject an unsupported connectivity value");
+    }
+
     void aStarRoutesAroundObstacle()
     {
         const OccupancyGrid grid = gridWithOccupiedCells(
@@ -941,9 +963,9 @@ namespace
             Point2(4.0, 4.0), Point2(5.0, 4.0),
             Point2(5.0, 5.0), Point2(4.0, 5.0)
         };
-        const AStarPlanner environment(operationArea, { obstacle });
+        const PolygonEnvironment environment(operationArea, { obstacle });
         const OccupancyGrid master = PolygonRasterizer::rasterize(
-            environment.operationArea(), environment.obstacles(), 1.0);
+            environment.operationArea(), environment.effectiveObstacles(), 1.0);
         const OccupancyGrid planningGrid = master.subgrid(
             WorldBounds{ Point2(2.0, 1.0), Point2(8.0, 9.0) });
 
@@ -1068,9 +1090,9 @@ namespace
                 Point2(120.0, 65.0), Point2(105.0, 80.0)
             }
         };
-        const AStarPlanner environment(operationArea, obstacles);
+        const PolygonEnvironment environment(operationArea, obstacles);
         const OccupancyGrid master = PolygonRasterizer::rasterize(
-            environment.operationArea(), environment.obstacles(), 1.0);
+            environment.operationArea(), environment.effectiveObstacles(), 1.0);
         const OccupancyGrid planningGrid = master.subgrid(
             WorldBounds{ Point2(4.0, 0.0), Point2(96.0, 60.0) });
         const auto start = planningGrid.geometry().worldToCell(Point2(5.0, 8.0));
@@ -1130,6 +1152,8 @@ namespace
         { "A* finds shortest path across empty grid", aStarFindsShortestPathAcrossEmptyGrid },
         { "A* handles coincident terminals", aStarHandlesCoincidentTerminals },
         { "A* validates terminals", aStarValidatesTerminals },
+        { "Grid plan result has safe default state", gridPlanResultHasSafeDefaultState },
+        { "A* rejects unsupported connectivity", aStarRejectsUnsupportedConnectivity },
         { "A* routes around obstacle", aStarRoutesAroundObstacle },
         { "A* reconstructs complete parent chain", aStarReconstructsCompleteParentChain },
         { "A* uses eight-connected diagonal path by default", aStarUsesEightConnectedDiagonalPathByDefault },

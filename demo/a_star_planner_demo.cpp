@@ -47,7 +47,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    AStarPlanner planner(obstacles);
+    PolygonEnvironment environment(obstacles);
 
     double minimumX = std::numeric_limits<double>::infinity();
     double minimumY = std::numeric_limits<double>::infinity();
@@ -86,11 +86,11 @@ int main(int argc, char* argv[])
         mapBounds, gridResolution);
     const auto gridStartTime = Clock::now();
     const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
-        gridGeometry, planner.obstacles());
+        gridGeometry, environment.effectiveObstacles());
     const auto gridElapsed = Clock::now() - gridStartTime;
     const OccupancyGrid& planningGrid = masterGrid;
 
-    std::cout << "Environment has " << planner.obstacles().size()
+    std::cout << "Environment has " << environment.effectiveObstacles().size()
               << " effective obstacles\n";
     std::cout << "Master occupancy grid: "
               << masterGrid.width() << " x " << masterGrid.height()
@@ -128,7 +128,7 @@ int main(int argc, char* argv[])
         return 1;
     }
     const std::vector<Point2> worldPath = gridPathToWorld(planningGrid, plan.path);
-    visualize(planner, start, goal, 1200, outputFile, worldPath);
+    visualize(environment, start, goal, 1200, outputFile, worldPath);
 
     OccupancyGridRenderOptions gridView;
     gridView.pixelsPerCell = 8;

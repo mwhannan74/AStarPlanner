@@ -65,12 +65,12 @@ int main(int argc, char* argv[])
 
     const Point2 start(5.0, 8.0);
     const Point2 goal(95.0, 52.0);
-    AStarPlanner planner(operationArea, obstacles);
+    PolygonEnvironment environment(operationArea, obstacles);
     constexpr double gridResolution = 1.0;
     const auto gridStartTime = Clock::now();
     const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
-        planner.operationArea(),
-        planner.obstacles(),
+        environment.operationArea(),
+        environment.effectiveObstacles(),
         gridResolution);
     const auto gridElapsed = Clock::now() - gridStartTime;
     // This caller-selected ROI retains the operation area's full vertical span,
@@ -83,9 +83,9 @@ int main(int argc, char* argv[])
 
     std::cout << "Input obstacles: " << obstacles.size() << '\n';
     std::cout << "Effective obstacles after clipping: "
-              << planner.obstacles().size() << '\n';
+              << environment.effectiveObstacles().size() << '\n';
     std::cout << "Clipped obstacle overlays: "
-              << planner.clippedObstacles().size() << '\n';
+              << environment.clippedObstacles().size() << '\n';
     std::cout << "Master occupancy grid: "
               << masterGrid.width() << " x " << masterGrid.height()
               << " cells at " << masterGrid.geometry().resolution()
@@ -125,7 +125,7 @@ int main(int argc, char* argv[])
         return 1;
     }
     const std::vector<Point2> worldPath = gridPathToWorld(planningGrid, plan.path);
-    visualize(planner, start, goal, 1200, outputFile, worldPath);
+    visualize(environment, start, goal, 1200, outputFile, worldPath);
 
     OccupancyGridRenderOptions gridView;
     gridView.pixelsPerCell = 8;

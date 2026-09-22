@@ -14,7 +14,7 @@ reusable environment model, occupancy grid, and initial A* planner. It supports:
 - convex polygon normalization and validation
 - an optional convex operation area
 - clipping obstacles to the operation area
-- separate original, clipped, and effective obstacle views
+- separate normalized-input, clipped, and effective obstacle views
 - an OpenCV-backed binary occupancy grid
 - world, Cartesian-grid, and OpenCV-image coordinate conversion
 - explicit cell-sized, world-bounds-sized, and polygon-sized grids
@@ -32,6 +32,12 @@ reusable environment model, occupancy grid, and initial A* planner. It supports:
 
 The former visibility-graph implementation has been removed. The active planner
 uses grid-based A* search with safe eight-connected movement by default.
+
+`PolygonEnvironment` owns validated polygon and operation-area geometry;
+`AStarGridPlanner` performs search on an `OccupancyGrid`. The former
+`AStarPlanner` type name remains as a deprecated compatibility alias. New code
+should use `normalizedObstacles()` for normalized inputs and
+`effectiveObstacles()` for geometry after operation-area clipping.
 
 ## Assumptions and validation
 
@@ -175,10 +181,10 @@ int main()
         Point2(-2.0, -2.0), Point2(8.0, -2.0),
         Point2(8.0, 8.0), Point2(-2.0, 8.0)
     };
-    AStarPlanner planner(operationArea, obstacles);
+    PolygonEnvironment environment(operationArea, obstacles);
 
     OccupancyGrid master = PolygonRasterizer::rasterize(
-        planner.operationArea(), planner.obstacles(), 0.5);
+        environment.operationArea(), environment.effectiveObstacles(), 0.5);
     OccupancyGrid planningWindow = master.subgrid(
         WorldBounds{ Point2(-1.0, -1.0), Point2(6.0, 6.0) });
 

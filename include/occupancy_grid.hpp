@@ -607,10 +607,22 @@ namespace astar
         GridCell _masterCellOffset;
     };
 
+    /** Converts an ordered grid path to the world positions of its cell centers. */
+    inline std::vector<Point2> gridPathToWorld(
+        const OccupancyGrid& grid,
+        const std::vector<GridCell>& path)
+    {
+        std::vector<Point2> worldPath;
+        worldPath.reserve(path.size());
+        for (const GridCell& cell : path)
+            worldPath.push_back(grid.geometry().cellCenterToWorld(cell));
+        return worldPath;
+    }
+
     /**
      * Validates and paints convex world-coordinate polygons into an occupancy grid.
      *
-     * Input polygons are normalized using the same rules as AStarPlanner: closing
+     * Input polygons are normalized using the same rules as PolygonEnvironment: closing
      * and consecutive duplicate vertices and redundant collinear vertices are
      * removed, clockwise winding is reversed, and non-finite, self-intersecting,
      * degenerate, or concave polygons are rejected.
@@ -666,7 +678,7 @@ namespace astar
             const Polygon& polygon,
             const char* description)
         {
-            const Polygon normalized = AStarPlanner::normalizePolygon(
+            const Polygon normalized = PolygonEnvironment::normalizePolygon(
                 polygon, description, "PolygonRasterizer");
             std::vector<cv::Point2d> imagePolygon =
                 geometry.worldToImage(normalized);

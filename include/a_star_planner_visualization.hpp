@@ -1,9 +1,9 @@
 /*
- * a_star_planner_visualization.hpp – Environment plotting for AStarPlanner.
+ * a_star_planner_visualization.hpp – Polygon-environment plotting.
  *
  * ────
  * Core features
- *   • Renders an optional operation area plus original and clipped obstacles.
+ *   • Renders an optional operation area plus normalized and clipped obstacles.
  *   • Highlights start and goal query points.
  *   • Keeps plotting support separate from the core planner header.
  * ────
@@ -23,14 +23,14 @@ namespace astar
      * Draws the operation-area boundary when present, followed by obstacle
      * polygons, an optional world-coordinate path, and the start/goal markers.
      *
-     * @param planner   Environment to render.
+     * @param environment Environment to render.
      * @param start     Start query point.
      * @param goal      Goal query point.
      * @param pixelSize Figure width/height in pixels.
      * @param outputFile Optional image filename written before showing the window.
      * @param path       Optional path in world coordinates.
      */
-    inline void visualize(const AStarPlanner& planner,
+    inline void visualize(const PolygonEnvironment& environment,
         const Point2& start,
         const Point2& goal,
         int pixelSize = 1200,
@@ -53,9 +53,9 @@ namespace astar
         clippedObstacleStyle.fill_color = Color::Magenta();
         clippedObstacleStyle.fill_alpha = 0.25f;
 
-        if (planner.hasOperationArea())
+        if (environment.hasOperationArea())
         {
-            const auto& operationArea = planner.operationArea();
+            const auto& operationArea = environment.operationArea();
             std::vector<double> x;
             std::vector<double> y;
             x.reserve(operationArea.size() + 1);
@@ -106,10 +106,12 @@ namespace astar
             }
         };
 
-        // Draw every original obstacle, including portions outside the
+        // Draw every normalized input obstacle, including portions outside the
         // operation area, then highlight positive-area clipped results.
-        drawPolygons(planner.originalObstacles(), obstacleStyle, "Original obstacle");
-        drawPolygons(planner.clippedObstacles(), clippedObstacleStyle, "Clipped obstacle");
+        drawPolygons(
+            environment.normalizedObstacles(), obstacleStyle, "Normalized obstacle");
+        drawPolygons(
+            environment.clippedObstacles(), clippedObstacleStyle, "Clipped obstacle");
 
         if (!path.empty())
         {
@@ -140,7 +142,7 @@ namespace astar
 
         fig.grid(true);
         fig.equal_scale(true);
-        fig.title(planner.hasOperationArea()
+        fig.title(environment.hasOperationArea()
             ? "AStarPlanner Operation Area"
             : "AStarPlanner Environment");
         fig.legend(true, "southEast");

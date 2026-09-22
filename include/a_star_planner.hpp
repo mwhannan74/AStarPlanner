@@ -1,5 +1,5 @@
 ﻿/*
- * a_star_planner.hpp – Environment model for the AStarPlanner library.
+ * a_star_planner.hpp – Polygon environment model for the AStarPlanner library.
  *
  * ────
  * Provides validated polygon and operation-area geometry for grid-based
@@ -23,17 +23,13 @@ namespace astar
 
     // Public world-coordinate geometry types.
     using Point2 = Eigen::Vector2d;
-    using Polygon = std::vector<Point2>;   // Ordered vertices; validated by AStarPlanner.
-    struct Segment2 { Point2 a, b; };
-
-    // Base relative tolerance used by scale-aware geometric predicates.
-    inline constexpr double EPS = 1e-12;
+    using Polygon = std::vector<Point2>; // Ordered vertices; validated by PolygonEnvironment.
 
     /**
-     * @class AStarPlanner
+     * @class PolygonEnvironment
      * @brief Validated polygon environment for grid-based A* planning.
      */
-    class AStarPlanner
+    class PolygonEnvironment
     {
     public:
         /**
@@ -52,7 +48,7 @@ namespace astar
          * coordinates or, after the undersized-input filter, is
          * self-intersecting, degenerate, or concave.
          */
-        explicit AStarPlanner(const std::vector<Polygon>& obstacles)
+        explicit PolygonEnvironment(const std::vector<Polygon>& obstacles)
         {
             initializeObstacles(obstacles);
         }
@@ -60,9 +56,9 @@ namespace astar
         /**
          * @brief Construct an environment constrained to a convex operation area.
          *
-         * Start and goal queries must be strictly inside @p operationArea.
-         * Obstacles are clipped to the operation area. Obstacles wholly
-         * outside it, or touching it with zero intersection area, are ignored.
+         * The operation area defines keep-in geometry for later rasterization.
+         * Obstacles are clipped to it. Obstacles wholly outside it, or touching
+         * it with zero intersection area, are ignored.
          * Overlapping obstacles are not validated.
          *
          * @param operationArea Convex, simple keep-in area.
@@ -71,7 +67,7 @@ namespace astar
          * non-simple, degenerate, or concave, or if an obstacle fails the same
          * validation after the undersized-input filter.
          */
-        AStarPlanner(const Polygon& operationArea,
+        PolygonEnvironment(const Polygon& operationArea,
             const std::vector<Polygon>& obstacles)
             : _hasOperationArea(true)
         {
@@ -86,22 +82,43 @@ namespace astar
         const Polygon& operationArea() const
         {
             if (!_hasOperationArea)
-                throw std::logic_error("operationArea: planner has no operation area");
+                throw std::logic_error("operationArea: environment has no operation area");
             return _operationArea;
         }
 
         // Normalized input obstacles before operation-area clipping, including
         // geometry outside the operation area.
-        const std::vector<Polygon>& originalObstacles() const { return _originalObstacles; }
+        const std::vector<Polygon>& normalizedObstacles() const
+        {
+            return _normalizedObstacles;
+        }
 
         // Positive-area effective obstacles whose geometry changed during clipping.
         const std::vector<Polygon>& clippedObstacles() const { return _clippedObstacles; }
 
         // Effective obstacles available to occupancy-grid builders.
-        const std::vector<Polygon>& obstacles() const { return _obstacles; }
+        const std::vector<Polygon>& effectiveObstacles() const
+        {
+            return _effectiveObstacles;
+        }
+
+        [[deprecated("Use normalizedObstacles() instead.")]]
+        const std::vector<Polygon>& originalObstacles() const
+        {
+            return normalizedObstacles();
+        }
+
+        [[deprecated("Use effectiveObstacles() instead.")]]
+        const std::vector<Polygon>& obstacles() const
+        {
+            return effectiveObstacles();
+        }
 
     private:
         friend class PolygonRasterizer;
+
+        struct Segment2 { Point2 a, b; };
+        inline static constexpr double EPS = 1e-12;
 
         static bool isFinite(const Point2& point)
         {
@@ -120,14 +137,14 @@ namespace astar
                     if (!isFinite(point))
                     {
                         throw std::invalid_argument(
-                            "AStarPlanner: obstacle contains a non-finite coordinate");
+                            "PolygonEnvironment: obstacle contains a non-finite coordinate");
                     }
                 }
                 if (poly.size() < 3)
                     continue;
                 Polygon normalizedObstacle = normalizePolygon(poly, "obstacle");
 
-                _originalObstacles.push_back(normalizedObstacle);
+                _normalizedObstacles.push_back(normalizedObstacle);
 
                 Polygon effectiveObstacle = _hasOperationArea
                     ? clipConvexPolygon(normalizedObstacle, _operationArea)
@@ -145,7 +162,7 @@ namespace astar
                     _clippedObstacles.push_back(effectiveObstacle);
                 }
 
-                _obstacles.push_back(std::move(effectiveObstacle));
+                _effectiveObstacles.push_back(std::move(effectiveObstacle));
             }
         }
 
@@ -228,7 +245,7 @@ namespace astar
         static Polygon normalizePolygon(
             const Polygon& input,
             const char* polygonRole,
-            const char* componentName = "AStarPlanner")
+            const char* componentName = "PolygonEnvironment")
         {
             for (const auto& point : input)
             {
@@ -454,9 +471,9 @@ namespace astar
         // Data
         Polygon                           _operationArea;
         bool                              _hasOperationArea = false;
-        std::vector<Polygon>              _originalObstacles;
+        std::vector<Polygon>              _normalizedObstacles;
         std::vector<Polygon>              _clippedObstacles;
-        std::vector<Polygon>              _obstacles; // Effective obstacle geometry.
+        std::vector<Polygon>              _effectiveObstacles;
         /**
          * @brief Computes twice the signed area of the triangle (a, b, c).
          *
@@ -537,5 +554,8 @@ namespace astar
         }
 
     };
+
+    using AStarPlanner [[deprecated("Use PolygonEnvironment instead.")]] =
+        PolygonEnvironment;
 } // namespace astar
 

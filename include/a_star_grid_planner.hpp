@@ -55,7 +55,7 @@ namespace astar
 
     struct GridPlanResult
     {
-        GridPlanStatus status;
+        GridPlanStatus status = GridPlanStatus::NoPath;
         std::vector<GridCell> path;
 
         bool succeeded() const noexcept
@@ -64,24 +64,15 @@ namespace astar
         }
     };
 
-    /** Converts an ordered grid path to the world positions of its cell centers. */
-    inline std::vector<Point2> gridPathToWorld(
-        const OccupancyGrid& grid,
-        const std::vector<GridCell>& path)
-    {
-        std::vector<Point2> worldPath;
-        worldPath.reserve(path.size());
-        for (const GridCell& cell : path)
-            worldPath.push_back(grid.geometry().cellCenterToWorld(cell));
-        return worldPath;
-    }
-
     /**
      * Planning entry point for an occupancy grid.
      *
      * Eight-connected movement is the default. Orthogonal moves cost 1,
      * diagonal moves cost sqrt(2), and the heuristic is selected to match the
      * configured connectivity. Returned paths include both terminal cells.
+     *
+     * @throws std::invalid_argument if options contain an unsupported
+     * connectivity value.
      */
     class AStarGridPlanner
     {
@@ -92,6 +83,13 @@ namespace astar
             const GridCell& goal,
             const AStarOptions& options = {}) const
         {
+            if (options.connectivity != GridConnectivity::FourConnected &&
+                options.connectivity != GridConnectivity::EightConnected)
+            {
+                throw std::invalid_argument(
+                    "AStarGridPlanner: unsupported grid connectivity");
+            }
+
             if (!grid.contains(start))
                 return { GridPlanStatus::StartOutsideGrid, {} };
             if (!grid.contains(goal))
