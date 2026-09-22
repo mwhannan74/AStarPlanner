@@ -607,7 +607,19 @@ namespace astar
         GridCell _masterCellOffset;
     };
 
-    /** Paints validated world-coordinate polygons into an OpenCV occupancy grid. */
+    /**
+     * Validates and paints convex world-coordinate polygons into an occupancy grid.
+     *
+     * Input polygons are normalized using the same rules as AStarPlanner: closing
+     * and consecutive duplicate vertices and redundant collinear vertices are
+     * removed, clockwise winding is reversed, and non-finite, self-intersecting,
+     * degenerate, or concave polygons are rejected.
+     *
+     * Polygon vertices are transformed to subpixel OpenCV image coordinates and
+     * painted with cv::fillConvexPoly using LINE_8 coverage. A cell changes state
+     * when its corresponding image pixel is covered by OpenCV's filled-polygon
+     * rasterization; this is not a conservative any-cell-intersection test.
+     */
     class PolygonRasterizer
     {
     public:
@@ -654,13 +666,10 @@ namespace astar
             const Polygon& polygon,
             const char* description)
         {
-            if (polygon.size() < 3)
-            {
-                throw std::invalid_argument(
-                    std::string("PolygonRasterizer: ") + description +
-                    " must contain at least three vertices");
-            }
-            std::vector<cv::Point2d> imagePolygon = geometry.worldToImage(polygon);
+            const Polygon normalized = AStarPlanner::normalizePolygon(
+                polygon, description, "PolygonRasterizer");
+            std::vector<cv::Point2d> imagePolygon =
+                geometry.worldToImage(normalized);
             for (const cv::Point2d& point : imagePolygon)
             {
                 if (!std::isfinite(point.x) || !std::isfinite(point.y))

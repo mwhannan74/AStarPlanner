@@ -23,6 +23,8 @@
 
 namespace astar
 {
+    class PolygonRasterizer;
+
     // Public world-coordinate geometry types.
     using Point2 = Eigen::Vector2d;
     using Polygon = std::vector<Point2>;   // Ordered vertices; validated by AStarPlanner.
@@ -283,6 +285,7 @@ namespace astar
 #endif
 
     private:
+        friend class PolygonRasterizer;
 
         static bool isFinite(const Point2& point)
         {
@@ -410,15 +413,17 @@ namespace astar
             return true;
         }
 
-        static Polygon normalizePolygon(const Polygon& input,
-            const char* polygonRole)
+        static Polygon normalizePolygon(
+            const Polygon& input,
+            const char* polygonRole,
+            const char* componentName = "AStarPlanner")
         {
             for (const auto& point : input)
             {
                 if (!std::isfinite(point.x()) || !std::isfinite(point.y()))
                 {
                     throw std::invalid_argument(
-                        std::string("AStarPlanner: ") + polygonRole +
+                        std::string(componentName) + ": " + polygonRole +
                         " contains a non-finite coordinate");
                 }
             }
@@ -460,13 +465,13 @@ namespace astar
             if (normalized.size() < 3)
             {
                 throw std::invalid_argument(
-                    std::string("AStarPlanner: ") + polygonRole +
+                    std::string(componentName) + ": " + polygonRole +
                     " has fewer than three distinct non-collinear vertices");
             }
             if (!isSimplePolygon(normalized))
             {
                 throw std::invalid_argument(
-                    std::string("AStarPlanner: ") + polygonRole +
+                    std::string(componentName) + ": " + polygonRole +
                     " must be simple and non-self-intersecting");
             }
 
@@ -474,7 +479,7 @@ namespace astar
             if (std::abs(area) <= polygonAreaTolerance(normalized))
             {
                 throw std::invalid_argument(
-                    std::string("AStarPlanner: ") + polygonRole +
+                    std::string(componentName) + ": " + polygonRole +
                     " must have nonzero area");
             }
             if (area < 0.0)
@@ -483,7 +488,7 @@ namespace astar
             if (!isConvexCounterClockwise(normalized))
             {
                 throw std::invalid_argument(
-                    std::string("AStarPlanner: ") + polygonRole +
+                    std::string(componentName) + ": " + polygonRole +
                     " must be convex");
             }
             return normalized;

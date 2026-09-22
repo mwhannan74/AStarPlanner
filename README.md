@@ -44,6 +44,10 @@ search with safe eight-connected movement by default.
 - Obstacle inputs with fewer than three vertices are ignored with a warning.
 - Obstacles are clipped to the operation area when one is configured.
 - Empty, point-only, and line-only clipping results are discarded.
+- Direct `PolygonRasterizer` inputs are independently normalized and validated;
+  they must also describe convex simple polygons with nonzero area.
+- Rasterization follows OpenCV `fillConvexPoly` pixel coverage. It is not a
+  conservative rule that marks every cell touched by polygon geometry.
 
 Polygon holes and overlapping-obstacle validation are not supported.
 

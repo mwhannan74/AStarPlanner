@@ -538,6 +538,63 @@ namespace
             "unrelated cell should remain free");
     }
 
+    void rasterizerNormalizesValidPolygons()
+    {
+        const GridGeometry geometry(Point2(0.0, 0.0), 1.0, 3, 3);
+        const Polygon clockwiseWithRedundantVertices{
+            Point2(0.25, 0.25), Point2(0.25, 1.75),
+            Point2(1.75, 1.75), Point2(1.75, 1.0),
+            Point2(1.75, 0.25), Point2(0.25, 0.25)
+        };
+
+        const OccupancyGrid grid = PolygonRasterizer::rasterize(
+            geometry, { clockwiseWithRedundantVertices });
+
+        require(grid.at({ 0, 0 }) == CellState::Occupied &&
+                grid.at({ 1, 1 }) == CellState::Occupied,
+            "rasterizer should normalize valid polygon winding and vertices");
+        require(grid.isTraversable({ 2, 2 }),
+            "normalizing an obstacle should not paint unrelated cells");
+    }
+
+    void rasterizerRejectsInvalidPolygons()
+    {
+        const GridGeometry geometry(Point2(0.0, 0.0), 1.0, 4, 4);
+        const Polygon concave{
+            Point2(0.0, 0.0), Point2(3.0, 0.0), Point2(1.5, 1.0),
+            Point2(3.0, 3.0), Point2(0.0, 3.0)
+        };
+        const Polygon selfIntersecting{
+            Point2(0.0, 0.0), Point2(2.0, 2.0),
+            Point2(0.0, 2.0), Point2(2.0, 0.0)
+        };
+        const Polygon degenerate{
+            Point2(0.0, 0.0), Point2(1.0, 0.0), Point2(2.0, 0.0)
+        };
+        const Polygon nonFinite{
+            Point2(0.0, 0.0),
+            Point2(std::numeric_limits<double>::infinity(), 0.0),
+            Point2(0.0, 1.0)
+        };
+
+        requireThrows<std::invalid_argument>(
+            [&] { static_cast<void>(PolygonRasterizer::rasterize(geometry, { concave })); },
+            "rasterizer should reject a concave obstacle");
+        requireThrows<std::invalid_argument>(
+            [&]
+            {
+                static_cast<void>(PolygonRasterizer::rasterize(
+                    geometry, selfIntersecting, {}));
+            },
+            "rasterizer should reject a self-intersecting operation area");
+        requireThrows<std::invalid_argument>(
+            [&] { static_cast<void>(PolygonRasterizer::rasterize(geometry, { degenerate })); },
+            "rasterizer should reject a degenerate obstacle");
+        requireThrows<std::invalid_argument>(
+            [&] { static_cast<void>(PolygonRasterizer::rasterize(geometry, { nonFinite })); },
+            "rasterizer should reject a non-finite obstacle");
+    }
+
     void obstacleOutsideGridLeavesMapFree()
     {
         const GridGeometry geometry(Point2(0.0, 0.0), 1.0, 2, 2);
@@ -1029,6 +1086,8 @@ namespace
         { "Rasterization paints covered cells", unconstrainedRasterizationPaintsCoveredCells },
         { "Operation area paints covered cells free", operationAreaPaintsCoveredCellsFree },
         { "Obstacle painting uses OpenCV coverage", obstaclePaintingUsesOpenCvCoverage },
+        { "Rasterizer normalizes valid polygons", rasterizerNormalizesValidPolygons },
+        { "Rasterizer rejects invalid polygons", rasterizerRejectsInvalidPolygons },
         { "Obstacle outside grid leaves map free", obstacleOutsideGridLeavesMapFree },
         { "Obstacle overrides operation area", obstacleOverridesOperationAreaFreeSpace },
         { "Rasterization produces binary OpenCV image", rasterizationProducesBinaryOpenCvImage },
