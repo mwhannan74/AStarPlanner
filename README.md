@@ -23,6 +23,8 @@ reusable environment model, occupancy grid, and working A* planner. It supports:
 - OpenCV-accelerated binary safety inflation in world units
 - master maps with shared or independently copied planning subgrids
 - eight-connected A* search with optional four-connected movement
+- Dijkstra search through the same planning interface
+- weighted A* with a configurable heuristic weight
 - unit orthogonal and `sqrt(2)` diagonal costs with matching heuristics
 - optional diagonal corner cutting, disabled by default
 - path cost and search-work diagnostics for every planning request
@@ -83,11 +85,20 @@ by a polygon. `OccupancyGridInflator` can produce an independent binary grid
 with a requested world-space safety radius around occupied cells and grid
 boundaries. Graded clearance costs are not yet provided.
 
-`AStarGridPlanner` uses eight-connected movement by default. Orthogonal moves
-cost `1`, diagonal moves cost `sqrt(2)`, and diagonal corner cutting is prevented
-unless explicitly enabled. Four-connected movement is available through
-`AStarOptions`. Equal-cost candidates are resolved deterministically with a
-straight-line-deviation tie-breaker.
+`AStarGridPlanner` uses A* with eight-connected movement by default. Every mode
+uses the same priority equation `g + weight * h`: Dijkstra selects weight `0`,
+A* selects weight `1`, and `GridSearchAlgorithm::WeightedAStar` uses
+`AStarOptions::heuristicWeight`. Weighted-A* weights must be finite and at least
+`1`; weight `1` is exactly equivalent to A*. Larger weights can reduce node
+expansion but may return a non-optimal path. The reported path cost remains the
+actual sum of movement costs, not the weighted queue priority.
+
+Orthogonal moves cost `1`, diagonal moves cost `sqrt(2)`, and diagonal corner
+cutting is prevented unless explicitly enabled. Four-connected movement is
+available through `AStarOptions`.
+Equal-cost candidates are resolved deterministically with a straight-line-
+deviation tie-breaker. `gridSearchAlgorithmName()` provides a readable name for
+the selected mode.
 
 Every `GridPlanResult` includes `GridPlanDiagnostics`. Successful searches
 report the final movement cost; unsuccessful searches use infinite path cost.
@@ -161,9 +172,9 @@ ctest --test-dir build -C Release --output-on-failure
 The annotated demos are executable tutorials for the complete planning workflow:
 
 - [`a_star_planner_demo.cpp`](demo/a_star_planner_demo.cpp) starts with obstacle
-  polygons, explicitly sizes a master grid, plans on the full grid, and renders
-  the result. Its pseudo-random obstacle field uses a fixed seed so runs are
-  repeatable.
+  polygons, explicitly sizes a master grid, runs weighted A* on the full grid,
+  and renders the result. Its pseudo-random obstacle field uses a fixed seed so
+  runs are repeatable.
 - [`operation_area_demo.cpp`](demo/operation_area_demo.cpp) adds an operation
   area, obstacle clipping, master-map construction, and a caller-selected
   planning ROI.
@@ -179,8 +190,8 @@ occupancy grid, terminals, and resulting A* path.
 The first demo builds an explicit world-aligned rectangular grid around a
 nonuniform field of polygon obstacles. The second builds a master grid directly
 from the operation area's bounding box, paints that area free, and then paints
-the effective obstacles occupied. The first demo plans on its complete master
-grid. The second demonstrates a caller-selected ROI that deliberately retains
+the effective obstacles occupied. The first demo runs weighted A* on its
+complete master grid. The second runs Dijkstra on a caller-selected ROI that deliberately retains
 the space needed to route around its obstacle walls. Both demos report
 grid-rasterization, safety-inflation, and planning time and display the path in
 the occupancy-grid view and the world-coordinate MatPlotOpenCV figure. Pass an optional image
@@ -280,7 +291,11 @@ int main()
     if (!start || !goal)
         return 1;
 
-    AStarOptions options; // Eight-connected with corner cutting prevented.
+    AStarOptions options; // A* and eight-connected movement by default.
+    // Dijkstra: options.algorithm = GridSearchAlgorithm::Dijkstra;
+    // Weighted A*:
+    // options.algorithm = GridSearchAlgorithm::WeightedAStar;
+    // options.heuristicWeight = 2.0;
     const AStarGridPlanner planner;
     const GridPlanResult result = planner.plan(
         planningGrid, *start, *goal, options);

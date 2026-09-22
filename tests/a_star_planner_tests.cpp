@@ -30,6 +30,7 @@ namespace
     using astar::GridPlanResult;
     using astar::GridPlanStatus;
     using astar::GridRegion;
+    using astar::GridSearchAlgorithm;
     using astar::OccupancyGrid;
     using astar::OccupancyGridInflator;
     using astar::Point2;
@@ -1018,7 +1019,7 @@ namespace
             "default planning result should be a deterministic unsuccessful result");
     }
 
-    void aStarRejectsUnsupportedConnectivity()
+    void gridPlannerRejectsUnsupportedOptions()
     {
         const OccupancyGrid grid(
             GridGeometry(Point2(0.0, 0.0), 1.0, 2, 2),
@@ -1030,6 +1031,121 @@ namespace
         requireThrows<std::invalid_argument>(
             [&] { static_cast<void>(planner.plan(grid, { 0, 0 }, { 1, 1 }, options)); },
             "planner should reject an unsupported connectivity value");
+
+        options = AStarOptions{};
+        options.algorithm = static_cast<GridSearchAlgorithm>(99);
+        requireThrows<std::invalid_argument>(
+            [&] { static_cast<void>(planner.plan(grid, { 0, 0 }, { 1, 1 }, options)); },
+            "planner should reject an unsupported search algorithm");
+
+        options.algorithm = GridSearchAlgorithm::WeightedAStar;
+        for (const double invalidWeight : {
+                 -1.0,
+                 0.0,
+                 0.99,
+                 std::numeric_limits<double>::infinity(),
+                 std::numeric_limits<double>::quiet_NaN() })
+        {
+            options.heuristicWeight = invalidWeight;
+            requireThrows<std::invalid_argument>(
+                [&] { static_cast<void>(planner.plan(grid, { 0, 0 }, { 1, 1 }, options)); },
+                "weighted A* should reject a non-finite or sub-unit heuristic weight");
+        }
+    }
+
+    void dijkstraMatchesAStarOptimalCost()
+    {
+        const OccupancyGrid grid(
+            GridGeometry(Point2(0.0, 0.0), 1.0, 25, 25),
+            CellState::Free);
+        const AStarGridPlanner planner;
+
+        AStarOptions aStarOptions;
+        aStarOptions.algorithm = GridSearchAlgorithm::AStar;
+        const auto aStarResult = planner.plan(
+            grid, { 0, 0 }, { 24, 24 }, aStarOptions);
+
+        AStarOptions dijkstraOptions;
+        dijkstraOptions.algorithm = GridSearchAlgorithm::Dijkstra;
+        const auto dijkstraResult = planner.plan(
+            grid, { 0, 0 }, { 24, 24 }, dijkstraOptions);
+
+        require(aStarResult.succeeded() && dijkstraResult.succeeded(),
+            "A* and Dijkstra should both find a path across an empty grid");
+        requireValidEightConnectedPath(
+            grid, dijkstraResult.path, { 0, 0 }, { 24, 24 });
+        require(std::abs(
+                aStarResult.diagnostics.pathCost -
+                dijkstraResult.diagnostics.pathCost) <= TEST_EPSILON,
+            "Dijkstra and A* should report the same optimal path cost");
+        require(dijkstraResult.diagnostics.expandedNodes >
+                aStarResult.diagnostics.expandedNodes,
+            "Dijkstra should expand more nodes than A* on an open diagonal search");
+        require(std::string(astar::gridSearchAlgorithmName(
+                    GridSearchAlgorithm::Dijkstra)) == "Dijkstra",
+            "search algorithm name should identify Dijkstra mode");
+    }
+
+    void weightedAStarUsesSharedWeightedHeuristic()
+    {
+        std::vector<GridCell> wall;
+        for (int row = 0; row < 18; ++row)
+            wall.push_back({ 20, row });
+        const OccupancyGrid grid = gridWithOccupiedCells(40, 20, wall);
+        const AStarGridPlanner planner;
+        const GridCell start{ 2, 10 };
+        const GridCell goal{ 37, 10 };
+
+        AStarOptions aStarOptions;
+        const auto aStarResult = planner.plan(grid, start, goal, aStarOptions);
+
+        AStarOptions unitWeightOptions;
+        unitWeightOptions.algorithm = GridSearchAlgorithm::WeightedAStar;
+        unitWeightOptions.heuristicWeight = 1.0;
+        const auto unitWeightResult = planner.plan(
+            grid, start, goal, unitWeightOptions);
+
+        require(aStarResult.succeeded() && unitWeightResult.succeeded(),
+            "A* and unit-weight A* should both find the wall detour");
+        require(aStarResult.path == unitWeightResult.path &&
+                aStarResult.diagnostics.pathCost ==
+                    unitWeightResult.diagnostics.pathCost &&
+                aStarResult.diagnostics.expandedNodes ==
+                    unitWeightResult.diagnostics.expandedNodes,
+            "weighted A* with weight one should behave exactly like A*");
+
+        AStarOptions weightedOptions;
+        weightedOptions.algorithm = GridSearchAlgorithm::WeightedAStar;
+        weightedOptions.heuristicWeight = 2.0;
+        const auto weightedResult = planner.plan(
+            grid, start, goal, weightedOptions);
+
+        require(weightedResult.succeeded(),
+            "weighted A* should find the wall detour");
+        requireValidEightConnectedPath(grid, weightedResult.path, start, goal);
+        require(weightedResult.diagnostics.pathCost + TEST_EPSILON >=
+                aStarResult.diagnostics.pathCost,
+            "weighted A* should not report a path cheaper than optimal A*");
+        require(weightedResult.diagnostics.expandedNodes <
+                aStarResult.diagnostics.expandedNodes,
+            "weighted A* should expand fewer nodes on the wall-detour map");
+
+        double measuredPathCost = 0.0;
+        for (std::size_t index = 1; index < weightedResult.path.size(); ++index)
+        {
+            const GridCell& previous = weightedResult.path[index - 1];
+            const GridCell& current = weightedResult.path[index];
+            const bool diagonal = previous.column != current.column &&
+                previous.row != current.row;
+            measuredPathCost += diagonal ? std::sqrt(2.0) : 1.0;
+        }
+        require(std::abs(
+                weightedResult.diagnostics.pathCost - measuredPathCost) <=
+                TEST_EPSILON,
+            "weighted A* should report movement cost rather than weighted priority");
+        require(std::string(astar::gridSearchAlgorithmName(
+                    GridSearchAlgorithm::WeightedAStar)) == "Weighted A*",
+            "search algorithm name should identify weighted A* mode");
     }
 
     void aStarRoutesAroundObstacle()
@@ -1275,7 +1391,9 @@ namespace
             "operation-area demo terminals should be inside its planning ROI");
 
         const AStarGridPlanner planner;
-        const auto result = planner.plan(planningGrid, *start, *goal);
+        AStarOptions options;
+        options.algorithm = GridSearchAlgorithm::Dijkstra;
+        const auto result = planner.plan(planningGrid, *start, *goal, options);
         require(result.succeeded(),
             std::string("operation-area demo should find a path: ") +
                 astar::gridPlanStatusName(result.status));
@@ -1332,7 +1450,9 @@ namespace
         { "A* handles coincident terminals", aStarHandlesCoincidentTerminals },
         { "A* validates terminals", aStarValidatesTerminals },
         { "Grid plan result has safe default state", gridPlanResultHasSafeDefaultState },
-        { "A* rejects unsupported connectivity", aStarRejectsUnsupportedConnectivity },
+        { "Grid planner rejects unsupported options", gridPlannerRejectsUnsupportedOptions },
+        { "Dijkstra matches A* optimal cost", dijkstraMatchesAStarOptimalCost },
+        { "Weighted A* uses shared weighted heuristic", weightedAStarUsesSharedWeightedHeuristic },
         { "A* routes around obstacle", aStarRoutesAroundObstacle },
         { "A* reconstructs complete parent chain", aStarReconstructsCompleteParentChain },
         { "A* uses eight-connected diagonal path by default", aStarUsesEightConnectedDiagonalPathByDefault },

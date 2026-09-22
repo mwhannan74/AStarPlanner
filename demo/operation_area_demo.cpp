@@ -138,14 +138,18 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // 7. Plan inside the selected ROI. NoPath would only mean that no route
-    // exists inside this ROI, not necessarily inside the complete master grid.
+    // 7. Plan inside the selected ROI. This demo selects Dijkstra; choosing
+    // GridSearchAlgorithm::AStar would use the connectivity-matched heuristic.
+    // NoPath only means that no route exists inside this ROI, not necessarily
+    // inside the complete master grid.
     const AStarGridPlanner gridPlanner;
+    AStarOptions options;
+    options.algorithm = GridSearchAlgorithm::Dijkstra;
     const auto planningStartTime = Clock::now();
     const GridPlanResult plan = gridPlanner.plan(
-        planningGrid, *startCell, *goalCell);
+        planningGrid, *startCell, *goalCell, options);
     const auto planningElapsed = Clock::now() - planningStartTime;
-    std::cout << "A* planning: "
+    std::cout << gridSearchAlgorithmName(options.algorithm) << " planning: "
               << std::chrono::duration<double, std::milli>(planningElapsed).count()
               << " ms\n"
               << "Expanded nodes: " << plan.diagnostics.expandedNodes << '\n'

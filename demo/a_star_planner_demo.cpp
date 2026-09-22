@@ -124,14 +124,20 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // 7. Run A*. Default options use eight-connected movement and prevent
-    // diagonal corner cutting.
+    // 7. Run weighted A*. A larger heuristic weight can reduce search effort at
+    // the cost of path optimality. The operation-area demo uses Dijkstra, while
+    // leaving algorithm at its default would select normal A*. All three modes
+    // share this planner and use eight-connected movement here.
     const AStarGridPlanner gridPlanner;
+    AStarOptions options;
+    options.algorithm = GridSearchAlgorithm::WeightedAStar;
+    options.heuristicWeight = 2.0;
     const auto planningStartTime = Clock::now();
     const GridPlanResult plan = gridPlanner.plan(
-        planningGrid, *startCell, *goalCell);
+        planningGrid, *startCell, *goalCell, options);
     const auto planningElapsed = Clock::now() - planningStartTime;
-    std::cout << "A* planning: "
+    std::cout << gridSearchAlgorithmName(options.algorithm)
+              << " (weight " << options.heuristicWeight << ") planning: "
               << std::chrono::duration<double, std::milli>(planningElapsed).count()
               << " ms\n"
               << "Expanded nodes: " << plan.diagnostics.expandedNodes << '\n'

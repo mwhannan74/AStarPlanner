@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdlib>
 #include <cstdint>
@@ -54,9 +55,34 @@ namespace astar
         EightConnected
     };
 
-    /** Controls the grid movement model used by AStarGridPlanner. */
+    enum class GridSearchAlgorithm
+    {
+        /** A* search using the connectivity-matched admissible heuristic. */
+        AStar,
+        /** Dijkstra search using a zero heuristic. */
+        Dijkstra,
+        /** Weighted A* search using a caller-selected heuristic weight. */
+        WeightedAStar
+    };
+
+    inline const char* gridSearchAlgorithmName(
+        GridSearchAlgorithm algorithm) noexcept
+    {
+        switch (algorithm)
+        {
+        case GridSearchAlgorithm::AStar: return "A*";
+        case GridSearchAlgorithm::Dijkstra: return "Dijkstra";
+        case GridSearchAlgorithm::WeightedAStar: return "Weighted A*";
+        }
+        return "unknown grid search algorithm";
+    }
+
+    /** Controls the search algorithm and movement model. */
     struct AStarOptions
     {
+        GridSearchAlgorithm algorithm = GridSearchAlgorithm::AStar;
+        /** Applies only to WeightedAStar and must be finite and at least 1. */
+        double heuristicWeight = 1.0;
         GridConnectivity connectivity = GridConnectivity::EightConnected;
         /** Applies only to diagonal moves in an eight-connected search. */
         bool preventDiagonalCornerCutting = true;
@@ -91,15 +117,18 @@ namespace astar
     /**
      * Planning entry point for an occupancy grid.
      *
-     * Eight-connected movement is the default. Orthogonal moves cost 1,
-     * diagonal moves cost sqrt(2), and the heuristic is selected to match the
-     * configured connectivity. Diagonal moves cannot pass between occupied
-     * orthogonal neighbors unless corner cutting is enabled. Returned paths
-     * include both terminal cells and use deterministic straight-line deviation
-     * as a tie-breaker between equal-cost candidates.
+     * A* with eight-connected movement is the default. All algorithms use the
+     * same graph search and priority equation g + weight * h. Dijkstra selects
+     * weight 0, A* selects weight 1, and WeightedAStar uses heuristicWeight.
+     * Orthogonal moves cost 1, diagonal moves cost sqrt(2), and the base heuristic
+     * matches the configured connectivity. Diagonal moves cannot pass between
+     * occupied orthogonal neighbors unless corner cutting is enabled. Returned
+     * paths include both terminal cells and use deterministic straight-line
+     * deviation as a tie-breaker between equal-cost candidates. Weighted A* may
+     * return a non-optimal path in exchange for reducing search effort.
      *
-     * @throws std::invalid_argument if options contain an unsupported
-     * connectivity value.
+     * @throws std::invalid_argument if options contain an unsupported search
+     * algorithm or connectivity value.
      */
     class AStarGridPlanner
     {
@@ -110,6 +139,7 @@ namespace astar
             const GridCell& goal,
             const AStarOptions& options = {}) const
         {
+            const double heuristicWeight = effectiveHeuristicWeight(options);
             if (options.connectivity != GridConnectivity::FourConnected &&
                 options.connectivity != GridConnectivity::EightConnected)
             {
@@ -139,7 +169,12 @@ namespace astar
             GridPlanDiagnostics diagnostics;
 
             costs[startIndex] = 0;
-            open.push({ heuristic(start, goal, options), 0.0, 0, startIndex });
+            open.push({
+                heuristicWeight * heuristic(start, goal, options.connectivity),
+                0.0,
+                0,
+                startIndex
+            });
             diagnostics.generatedNodes = 1;
             diagnostics.peakOpenSetSize = 1;
 
@@ -189,7 +224,8 @@ namespace astar
                     costs[neighborIndex] = candidateCost;
                     parents[neighborIndex] = current.index;
                     open.push({
-                        candidateCost + heuristic(neighbor, goal, options),
+                        candidateCost + heuristicWeight *
+                            heuristic(neighbor, goal, options.connectivity),
                         candidateCost,
                         lineDeviation(start, goal, neighbor),
                         neighborIndex
@@ -267,16 +303,37 @@ namespace astar
             };
         }
 
+        static double effectiveHeuristicWeight(const AStarOptions& options)
+        {
+            switch (options.algorithm)
+            {
+            case GridSearchAlgorithm::Dijkstra:
+                return 0.0;
+            case GridSearchAlgorithm::AStar:
+                return 1.0;
+            case GridSearchAlgorithm::WeightedAStar:
+                if (!std::isfinite(options.heuristicWeight) ||
+                    options.heuristicWeight < 1.0)
+                {
+                    throw std::invalid_argument(
+                        "AStarGridPlanner: weighted A* heuristic weight must be finite and at least 1");
+                }
+                return options.heuristicWeight;
+            }
+            throw std::invalid_argument(
+                "AStarGridPlanner: unsupported search algorithm");
+        }
+
         static double heuristic(
             const GridCell& first,
             const GridCell& second,
-            const AStarOptions& options) noexcept
+            GridConnectivity connectivity) noexcept
         {
             const auto columnDistance = static_cast<std::size_t>(
                 std::abs(first.column - second.column));
             const auto rowDistance = static_cast<std::size_t>(
                 std::abs(first.row - second.row));
-            if (options.connectivity == GridConnectivity::EightConnected)
+            if (connectivity == GridConnectivity::EightConnected)
             {
                 const std::size_t diagonalSteps =
                     std::min(columnDistance, rowDistance);
