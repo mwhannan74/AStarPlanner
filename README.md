@@ -85,20 +85,50 @@ by a polygon. `OccupancyGridInflator` can produce an independent binary grid
 with a requested world-space safety radius around occupied cells and grid
 boundaries. Graded clearance costs are not yet provided.
 
-`AStarGridPlanner` uses A* with eight-connected movement by default. Every mode
-uses the same priority equation `g + weight * h`: Dijkstra selects weight `0`,
-A* selects weight `1`, and `GridSearchAlgorithm::WeightedAStar` uses
-`AStarOptions::heuristicWeight`. Weighted-A* weights must be finite and at least
-`1`; weight `1` is exactly equivalent to A*. Larger weights can reduce node
-expansion but may return a non-optimal path. The reported path cost remains the
-actual sum of movement costs, not the weighted queue priority.
+`AStarGridPlanner` uses A* with eight-connected movement by default. Orthogonal
+moves cost `1`, diagonal moves cost `sqrt(2)`, and diagonal corner cutting is
+prevented unless explicitly enabled. Four-connected movement is available
+through `AStarOptions`.
 
-Orthogonal moves cost `1`, diagonal moves cost `sqrt(2)`, and diagonal corner
-cutting is prevented unless explicitly enabled. Four-connected movement is
-available through `AStarOptions`.
-Equal-cost candidates are resolved deterministically with a straight-line-
-deviation tie-breaker. `gridSearchAlgorithmName()` provides a readable name for
-the selected mode.
+## Search algorithm modes
+
+The planner supports Dijkstra, A*, and weighted A* through one shared graph
+search. It does not contain three separate planner implementations. Before the
+search begins, `GridSearchAlgorithm` is converted to an effective heuristic
+weight. Every mode then uses the same priority equation:
+
+```text
+priority(n) = pathCostFromStart(n) + effectiveWeight * baseHeuristic(n, goal)
+```
+
+| Algorithm | Option | Effective weight | Behavior |
+|---|---|---:|---|
+| Dijkstra | `GridSearchAlgorithm::Dijkstra` | `0` | Optimal, but normally explores the broadest region because it has no goal-directed heuristic. |
+| A* | `GridSearchAlgorithm::AStar` | `1` | Default mode. Optimal with the planner's current admissible Manhattan or octile heuristic. |
+| Weighted A* | `GridSearchAlgorithm::WeightedAStar` | `heuristicWeight` | Weight `1` is exactly A*. Larger weights can reduce expansions but may return a non-optimal path. |
+
+The weighted-A* heuristic weight must be finite and at least `1`. It affects only
+open-set priority; it does not change orthogonal or diagonal movement costs.
+Consequently, `GridPlanDiagnostics::pathCost` always reports the actual sum of
+movement costs rather than the weighted priority.
+
+Select a mode through `AStarOptions`:
+
+```cpp
+AStarOptions options; // A* by default.
+
+options.algorithm = GridSearchAlgorithm::Dijkstra;
+
+options.algorithm = GridSearchAlgorithm::WeightedAStar;
+options.heuristicWeight = 2.0;
+```
+
+`heuristicWeight` is used only in weighted-A* mode. Dijkstra always selects an
+effective weight of `0`, and normal A* always selects `1`. The selected mode does
+not alter neighbor generation, collision checking, movement costs, parent
+tracking, path reconstruction, or diagnostics. Equal-cost candidates use a
+deterministic straight-line-deviation tie-breaker.
+`gridSearchAlgorithmName()` provides a readable name for the selected mode.
 
 Every `GridPlanResult` includes `GridPlanDiagnostics`. Successful searches
 report the final movement cost; unsuccessful searches use infinite path cost.
@@ -212,16 +242,47 @@ so `NoPath` means no path exists inside the supplied planning grid. Use the full
 master grid when no safe application-specific planning window is known. An
 automatic expanding-ROI retry policy is not currently provided.
 
+```bash
+> .\build\Release\a_star_planner_demo.exe
+Environment has 25 effective obstacles
+Master occupancy grid: 69 x 75 cells at 1 world units per cell
+Planning grid (full master map): 69 x 75 cells with 1 world units of safety inflation
+Grid rasterization: 0.036 ms
+Safety inflation: 0.051 ms
+Weighted A* (weight 2.000) planning: 0.062 ms
+Expanded nodes: 162
+Generated nodes: 431
+Peak open-set size: 255
+Path cost: 112.912
+A* path: 99 cells
+```
+
 <p align="center">
   <img src="images/a_star_planner_demo.png"
        alt="AStarPlanner polygon environment demo"
-       width="600">
+       width="800">
 </p>
 
+```bash
+> .\build\Release\operation_area_demo.exe
+Input obstacles: 9
+Effective obstacles after clipping: 8
+Clipped obstacle overlays: 5
+Master occupancy grid: 100 x 60 cells at 1 world units per cell
+Planning ROI (caller-selected): 94 x 60 cells, master offset (3, 0) with 1 world units of safety inflation
+Grid rasterization: 0.031 ms
+Safety inflation: 0.051 ms
+Dijkstra planning: 0.195 ms
+Expanded nodes: 3082
+Generated nodes: 3186
+Peak open-set size: 60
+Path cost: 181.397
+A* path: 165 cells
+```
 <p align="center">
   <img src="images/a_star_planner_operation_area_demo.png"
        alt="AStarPlanner operation-area and obstacle-clipping demo"
-       width="600">
+       width="800">
 </p>
 
 ## CMake targets
