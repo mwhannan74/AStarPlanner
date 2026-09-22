@@ -8,7 +8,7 @@ planning on two-dimensional occupancy grids.
 ## Current development checkpoint
 
 The repository began as a copy of VisGraphPlanner. The active code provides a
-reusable environment model, occupancy grid, and initial A* planner. It supports:
+reusable environment model, occupancy grid, and working A* planner. It supports:
 
 - Eigen world-coordinate points and polygon obstacles
 - convex polygon normalization and validation
@@ -57,13 +57,50 @@ should use `normalizedObstacles()` for normalized inputs and
 
 Polygon holes and overlapping-obstacle validation are not supported.
 
+## Coordinates, rasterization, and search
+
+- World coordinates are Cartesian `Point2` values.
+- `GridCell{column, row}` is also Cartesian: cell `(0, 0)` is at the lower-left
+  of a grid and rows increase with world `y`.
+- OpenCV image rows increase downward. `GridGeometry` owns this vertical-axis
+  conversion; callers should not invert rows themselves.
+- A grid's world origin is the lower-left outer corner of cell `(0, 0)`, not its
+  center. Each cell is `resolution` world units wide and high.
+- Grid world bounds are half-open. Points on the maximum `x` or `y` boundary
+  are outside the grid.
+- `gridPathToWorld()` converts path cells to cell centers. The resulting first
+  and last points therefore represent the centers of the selected start and
+  goal cells, not necessarily the exact world inputs.
+
+With an operation area, rasterization starts with every cell occupied, paints
+the operation area free, and then paints effective obstacles occupied. Without
+an operation area, rasterization starts free and paints obstacles occupied.
+OpenCV filled-polygon pixel coverage determines which cells change state; the
+current rasterizer does not conservatively mark every cell geometrically touched
+by a polygon. Robot-radius inflation and clearance costs are not yet provided.
+
+`AStarGridPlanner` uses eight-connected movement by default. Orthogonal moves
+cost `1`, diagonal moves cost `sqrt(2)`, and diagonal corner cutting is prevented
+unless explicitly enabled. Four-connected movement is available through
+`AStarOptions`. Equal-cost candidates are resolved deterministically with a
+straight-line-deviation tie-breaker.
+
+Successful paths include both terminal cells. Failed plans return an empty path
+and one of these statuses:
+
+- `StartOutsideGrid` or `GoalOutsideGrid`
+- `StartOccupied` or `GoalOccupied`
+- `NoPath`
+
+`gridPlanStatusName()` provides a readable description of any status.
+
 ## Requirements
 
 - CMake 3.16 or newer
 - A C++17 compiler
 - [Eigen](https://eigen.tuxfamily.org/) for world-coordinate geometry
-- OpenCV 4.5 or newer for occupancy-grid storage
-- [MatPlotOpenCV](https://github.com/mwhannan74/MatPlotOpenCV) for visualization and demos
+- OpenCV 4.5 or newer for occupancy storage, polygon rasterization, and grid rendering
+- [MatPlotOpenCV](https://github.com/mwhannan74/MatPlotOpenCV) when visualization or demos are enabled
 
 The environment-only `a_star_planner.hpp` header does not include OpenCV.
 The occupancy-grid API is provided by `occupancy_grid.hpp`.
@@ -86,7 +123,7 @@ cmake -S . -B build -DMATPLOTOPENCV_BUILD_DEMO=OFF -DMATPLOTOPENCV_BUILD_DOCS=OF
 cmake --build build --config Release
 ```
 
-To build only the core environment model and tests:
+To build the core library and tests without visualization or demos:
 
 ```powershell
 cmake -S . -B build -DASTAR_PLANNER_ENABLE_VISUALIZATION=OFF -DASTAR_PLANNER_BUILD_DEMO=OFF
@@ -95,7 +132,7 @@ cmake --build build --config Release
 
 ## Tests
 
-Run the environment and occupancy-grid tests directly:
+Run the environment, occupancy-grid, rasterization, and planner tests directly:
 
 ```powershell
 .\build\Release\a_star_planner_tests.exe
@@ -129,6 +166,13 @@ view and the world-coordinate MatPlotOpenCV figure. Pass an optional image
 filename as the first argument to save the world-coordinate figure before its
 windows are displayed.
 
+The reported grid time begins immediately before the rasterizer call and
+excludes `PolygonEnvironment` construction, including obstacle clipping. The
+operation-area rasterizer overload also selects its master-grid geometry. The
+reported planning time covers only `AStarGridPlanner::plan()`; coordinate
+conversion and rendering are excluded. These are single-run diagnostics, not
+formal benchmarks.
+
 A planning ROI restricts the search domain; it is not only a storage or display
 crop. A path that exists in the master grid may require cells outside the ROI,
 so `NoPath` means no path exists inside the supplied planning grid. Use the full
@@ -149,10 +193,10 @@ automatic expanding-ROI retry policy is not currently provided.
 
 ## CMake targets
 
-- `AStarPlanner::astar_planner` — header-only environment and occupancy-grid model
+- `AStarPlanner::astar_planner` — header-only environment, occupancy grid, rasterizer, and A* planner
 - `AStarPlanner::astar_occupancy_grid_visualization` — reusable OpenCV grid rendering
 - `AStarPlanner::astar_planner_visualization` — optional planner and grid visualization support
-- `a_star_planner_tests` — deterministic environment tests
+- `a_star_planner_tests` — deterministic environment, grid, rasterization, and planner tests
 - `a_star_planner_demo` — unconstrained-environment demo
 - `operation_area_demo` — operation-area and clipping demo
 
@@ -160,8 +204,10 @@ automatic expanding-ROI retry policy is not currently provided.
 
 ```cpp
 #include "a_star_planner.hpp"
+#include "a_star_grid_planner.hpp"
 #include "occupancy_grid.hpp"
 
+#include <iostream>
 #include <vector>
 
 int main()
@@ -170,25 +216,43 @@ int main()
 
     std::vector<Polygon> obstacles{
         {
-            Point2(0.0, 0.0),
-            Point2(5.0, 0.0),
-            Point2(5.0, 5.0),
-            Point2(0.0, 5.0)
+            Point2(4.0, 2.0),
+            Point2(6.0, 2.0),
+            Point2(6.0, 8.0),
+            Point2(4.0, 8.0)
         }
     };
 
     const Polygon operationArea{
-        Point2(-2.0, -2.0), Point2(8.0, -2.0),
-        Point2(8.0, 8.0), Point2(-2.0, 8.0)
+        Point2(0.0, 0.0), Point2(10.0, 0.0),
+        Point2(10.0, 10.0), Point2(0.0, 10.0)
     };
     PolygonEnvironment environment(operationArea, obstacles);
 
-    OccupancyGrid master = PolygonRasterizer::rasterize(
+    const OccupancyGrid planningGrid = PolygonRasterizer::rasterize(
         environment.operationArea(), environment.effectiveObstacles(), 0.5);
-    OccupancyGrid planningWindow = master.subgrid(
-        WorldBounds{ Point2(-1.0, -1.0), Point2(6.0, 6.0) });
 
-    return planningWindow.isTraversable({ 0, 0 }) ? 0 : 1;
+    const Point2 worldStart(1.0, 1.0);
+    const Point2 worldGoal(9.0, 9.0);
+    const auto start = planningGrid.geometry().worldToCell(worldStart);
+    const auto goal = planningGrid.geometry().worldToCell(worldGoal);
+    if (!start || !goal)
+        return 1;
+
+    AStarOptions options; // Eight-connected with corner cutting prevented.
+    const AStarGridPlanner planner;
+    const GridPlanResult result = planner.plan(
+        planningGrid, *start, *goal, options);
+    if (!result.succeeded())
+    {
+        std::cerr << gridPlanStatusName(result.status) << '\n';
+        return 1;
+    }
+
+    const std::vector<Point2> worldPath =
+        gridPathToWorld(planningGrid, result.path);
+    std::cout << "Path contains " << worldPath.size() << " cell centers\n";
+    return 0;
 }
 ```
 

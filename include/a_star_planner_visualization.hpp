@@ -22,6 +22,8 @@ namespace astar
      *
      * Draws the operation-area boundary when present, followed by obstacle
      * polygons, an optional world-coordinate path, and the start/goal markers.
+     * When a path is supplied, the exact start and goal positions are added to
+     * its ends; grid paths normally contain cell-center positions between them.
      *
      * @param environment Environment to render.
      * @param start     Start query point.

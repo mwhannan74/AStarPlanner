@@ -16,6 +16,7 @@
 
 namespace astar
 {
+    /** Marker colors use OpenCV's BGR cv::Scalar channel order. */
     struct OccupancyGridMarker
     {
         GridCell cell;
@@ -23,6 +24,7 @@ namespace astar
         int radiusPixels = 0;
     };
 
+    /** Path colors use OpenCV's BGR cv::Scalar channel order. */
     struct OccupancyGridPath
     {
         std::vector<GridCell> cells;
@@ -39,7 +41,10 @@ namespace astar
         std::vector<OccupancyGridMarker> markers;
     };
 
-    /** Free cells render white and occupied cells render black. */
+    /**
+     * Renders free cells white and occupied cells black in a BGR image.
+     * Overlay colors use OpenCV's BGR cv::Scalar channel order.
+     */
     inline cv::Mat3b renderOccupancyGrid(
         const OccupancyGrid& grid,
         const OccupancyGridRenderOptions& options = {})

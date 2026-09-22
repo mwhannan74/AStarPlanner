@@ -18,11 +18,17 @@ namespace astar
 {
     enum class GridPlanStatus
     {
+        /** Path contains the requested start and goal cells. */
         Success,
+        /** Start cell is outside the supplied planning grid. */
         StartOutsideGrid,
+        /** Goal cell is outside the supplied planning grid. */
         GoalOutsideGrid,
+        /** Start cell is occupied. */
         StartOccupied,
+        /** Goal cell is occupied. */
         GoalOccupied,
+        /** No path exists inside the supplied planning grid. */
         NoPath
     };
 
@@ -42,17 +48,21 @@ namespace astar
 
     enum class GridConnectivity
     {
+        /** Orthogonal movement only, with unit step cost. */
         FourConnected,
+        /** Orthogonal and diagonal movement, with diagonal cost sqrt(2). */
         EightConnected
     };
 
-    /** Search settings. Additional movement models can be added without changing plan(). */
+    /** Controls the grid movement model used by AStarGridPlanner. */
     struct AStarOptions
     {
         GridConnectivity connectivity = GridConnectivity::EightConnected;
+        /** Applies only to diagonal moves in an eight-connected search. */
         bool preventDiagonalCornerCutting = true;
     };
 
+    /** Planning outcome. Failed results contain an empty path. */
     struct GridPlanResult
     {
         GridPlanStatus status = GridPlanStatus::NoPath;
@@ -69,7 +79,10 @@ namespace astar
      *
      * Eight-connected movement is the default. Orthogonal moves cost 1,
      * diagonal moves cost sqrt(2), and the heuristic is selected to match the
-     * configured connectivity. Returned paths include both terminal cells.
+     * configured connectivity. Diagonal moves cannot pass between occupied
+     * orthogonal neighbors unless corner cutting is enabled. Returned paths
+     * include both terminal cells and use deterministic straight-line deviation
+     * as a tie-breaker between equal-cost candidates.
      *
      * @throws std::invalid_argument if options contain an unsupported
      * connectivity value.
