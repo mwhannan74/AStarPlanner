@@ -31,6 +31,7 @@ namespace
     using astar::GridPlanStatus;
     using astar::GridRegion;
     using astar::GridSearchAlgorithm;
+    using astar::GridSearchCellState;
     using astar::OccupancyGrid;
     using astar::OccupancyGridInflator;
     using astar::Point2;
@@ -1148,6 +1149,76 @@ namespace
             "search algorithm name should identify weighted A* mode");
     }
 
+    void searchDebugCallbackPublishesReusableStateGrid()
+    {
+        const OccupancyGrid grid = gridWithOccupiedCells(5, 3, { { 2, 0 } });
+        const AStarGridPlanner planner;
+        const GridCell start{ 0, 1 };
+        const GridCell goal{ 4, 1 };
+        const GridPlanResult normalResult = planner.plan(grid, start, goal);
+
+        std::size_t callbackCount = 0;
+        bool observedCurrent = false;
+        bool observedOpen = false;
+        cv::Mat1b finalFrame;
+        const astar::GridSearchDebugCallback callback =
+            [&](const cv::Mat1b& state)
+            {
+                ++callbackCount;
+                require(state.rows == grid.height() && state.cols == grid.width(),
+                    "debug-state image dimensions should match the planning grid");
+
+                cv::Mat1b currentCells;
+                cv::compare(
+                    state,
+                    static_cast<std::uint8_t>(GridSearchCellState::Current),
+                    currentCells,
+                    cv::CMP_EQ);
+                observedCurrent = observedCurrent ||
+                    cv::countNonZero(currentCells) > 0;
+
+                cv::Mat1b openCells;
+                cv::compare(
+                    state,
+                    static_cast<std::uint8_t>(GridSearchCellState::Open),
+                    openCells,
+                    cv::CMP_EQ);
+                observedOpen = observedOpen || cv::countNonZero(openCells) > 0;
+                finalFrame = state.clone();
+            };
+
+        const GridPlanResult debugResult = planner.plan(
+            grid, start, goal, AStarOptions{}, callback);
+
+        require(debugResult.status == normalResult.status &&
+                debugResult.path == normalResult.path &&
+                debugResult.diagnostics.pathCost ==
+                    normalResult.diagnostics.pathCost,
+            "debug callbacks should not change the planning result");
+        require(callbackCount == debugResult.diagnostics.expandedNodes + 1,
+            "successful debug planning should publish every expansion and final path");
+        require(observedCurrent && observedOpen,
+            "debug-state callbacks should expose current and open cells");
+        require(finalFrame(
+                    grid.geometry().cellToImage({ 2, 0 })) ==
+                static_cast<std::uint8_t>(GridSearchCellState::Occupied),
+            "debug-state grid should preserve occupied cells");
+        for (const GridCell& pathCell : debugResult.path)
+        {
+            const cv::Point pixel = grid.geometry().cellToImage(pathCell);
+            require(finalFrame(pixel.y, pixel.x) ==
+                    static_cast<std::uint8_t>(GridSearchCellState::Path),
+                "final debug-state frame should mark the returned path");
+        }
+
+        callbackCount = 0;
+        const auto invalidResult = planner.plan(
+            grid, { -1, 0 }, goal, AStarOptions{}, callback);
+        require(invalidResult.status == GridPlanStatus::StartOutsideGrid &&
+                callbackCount == 0,
+            "terminal validation failures should not allocate or publish debug state");
+    }
+
     void aStarRoutesAroundObstacle()
     {
         const OccupancyGrid grid = gridWithOccupiedCells(
@@ -1453,6 +1524,7 @@ namespace
         { "Grid planner rejects unsupported options", gridPlannerRejectsUnsupportedOptions },
         { "Dijkstra matches A* optimal cost", dijkstraMatchesAStarOptimalCost },
         { "Weighted A* uses shared weighted heuristic", weightedAStarUsesSharedWeightedHeuristic },
+        { "Search debug callback publishes state grid", searchDebugCallbackPublishesReusableStateGrid },
         { "A* routes around obstacle", aStarRoutesAroundObstacle },
         { "A* reconstructs complete parent chain", aStarReconstructsCompleteParentChain },
         { "A* uses eight-connected diagonal path by default", aStarUsesEightConnectedDiagonalPathByDefault },

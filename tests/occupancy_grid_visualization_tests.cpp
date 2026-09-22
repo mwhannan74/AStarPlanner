@@ -73,6 +73,28 @@ int main()
         require(singleCell[1] > 200 && singleCell[0] < 50 && singleCell[2] < 50,
             "a one-cell path should remain visible");
 
+        cv::Mat1b searchState(
+            grid.height(),
+            grid.width(),
+            static_cast<std::uint8_t>(GridSearchCellState::Unseen));
+        searchState(grid.geometry().cellToImage({ 0, 0 })) =
+            static_cast<std::uint8_t>(GridSearchCellState::Occupied);
+        searchState(grid.geometry().cellToImage({ 1, 0 })) =
+            static_cast<std::uint8_t>(GridSearchCellState::Expanded);
+        searchState(grid.geometry().cellToImage({ 0, 1 })) =
+            static_cast<std::uint8_t>(GridSearchCellState::Open);
+
+        GridSearchStateRenderOptions searchOptions;
+        searchOptions.pixelsPerCell = 4;
+        searchOptions.drawCellBorders = false;
+        const cv::Mat3b searchImage = renderGridSearchState(
+            grid, searchState, { 0, 1 }, { 1, 1 }, searchOptions);
+        require(searchImage.rows == 8 && searchImage.cols == 8,
+            "search-state rendering should scale to the configured cell size");
+        const cv::Vec3b expandedCell = searchImage(6, 6);
+        require(expandedCell[0] > 200 && expandedCell[1] > 150,
+            "expanded search cells should use the configured debug color");
+
         bool rejectedInvalidScale = false;
         try
         {
@@ -121,6 +143,20 @@ int main()
         }
         require(rejectedInvalidPathThickness,
             "non-positive path thickness should be rejected");
+
+        bool rejectedInvalidSearchState = false;
+        try
+        {
+            cv::Mat1b invalidState(2, 2, std::uint8_t{ 99 });
+            static_cast<void>(renderGridSearchState(
+                grid, invalidState, { 0, 1 }, { 1, 1 }));
+        }
+        catch (const std::invalid_argument&)
+        {
+            rejectedInvalidSearchState = true;
+        }
+        require(rejectedInvalidSearchState,
+            "search-state rendering should reject unsupported state values");
 
         std::cout << "Occupancy-grid visualization tests passed\n";
         return 0;

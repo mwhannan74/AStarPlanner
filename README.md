@@ -28,6 +28,7 @@ reusable environment model, occupancy grid, and working A* planner. It supports:
 - unit orthogonal and `sqrt(2)` diagonal costs with matching heuristics
 - optional diagonal corner cutting, disabled by default
 - path cost and search-work diagnostics for every planning request
+- optional synchronous search-state callbacks for live OpenCV debugging
 - conversion of ROI-local grid paths to world-coordinate cell centers
 - explicit planning outcomes for invalid terminals and unreachable goals
 - optional environment visualization through MatPlotOpenCV
@@ -147,6 +148,58 @@ and one of these statuses:
 
 `gridPlanStatusName()` provides a readable description of any status.
 
+### Live search debugging
+
+`AStarGridPlanner::plan()` accepts an optional `GridSearchDebugCallback`. An
+empty callback is normal planning: no debug-state image is allocated or updated.
+Supplying a callback allocates one reusable `cv::Mat1b` with the same dimensions
+and image orientation as the planning grid. Each pixel contains a
+`GridSearchCellState` value: `Unseen`, `Open`, `Current`, `Expanded`, `Path`, or
+`Occupied`.
+
+The default debug rendering uses this color key:
+
+| Color | Search meaning |
+|---|---|
+| White | Unseen traversable cell |
+| Yellow | Open/frontier cell discovered but not yet expanded |
+| Orange | Cell currently being expanded |
+| Light blue | Expanded cell whose neighbors have been examined |
+| Blue | Final reconstructed path |
+| Black | Occupied cell |
+| Green marker | Start cell |
+| Red marker | Goal cell |
+
+These are visualization colors rather than occupancy values.
+`GridSearchStateRenderOptions` allows every color to be changed without changing
+the planner's `GridSearchCellState` values.
+
+The callback runs synchronously after each accepted expansion and once more for
+the final path or exhausted search. It therefore blocks planning until it
+returns, which allows a debug callback to control animation speed with
+`cv::waitKey()` without storing image snapshots:
+
+```cpp
+GridSearchDebugCallback debugCallback =
+    [&](const cv::Mat1b& state)
+    {
+        showGridSearchState(
+            planningGrid, state, start, goal, {}, "Search Debug");
+        cv::waitKey(10);
+    };
+
+const GridPlanResult result = planner.plan(
+    planningGrid, start, goal, options, debugCallback);
+```
+
+The matrix is a read-only view of storage reused by the planner. It is valid
+only during the callback and is modified after the callback returns. Immediate
+display requires no copy; clone it inside the callback only when retaining a
+frame or transferring it to another thread. `renderGridSearchState()` and
+`showGridSearchState()` map the state values to configurable BGR colors. A
+callback may skip display work on selected invocations to reduce the number of
+rendered frames.
+
 ## Requirements
 
 - CMake 3.16 or newer
@@ -215,14 +268,19 @@ occupancy grid, terminals, and resulting A* path.
 ```powershell
 .\build\Release\a_star_planner_demo.exe
 .\build\Release\operation_area_demo.exe
+
+# Animate the search state while planning.
+.\build\Release\a_star_planner_demo.exe --debug
+.\build\Release\operation_area_demo.exe --debug
 ```
 
 The first demo builds an explicit world-aligned rectangular grid around a
 nonuniform field of polygon obstacles. The second builds a master grid directly
 from the operation area's bounding box, paints that area free, and then paints
 the effective obstacles occupied. The first demo runs weighted A* on its
-complete master grid. The second runs Dijkstra on a caller-selected ROI that deliberately retains
-the space needed to route around its obstacle walls. Both demos report
+complete master grid. The second runs Dijkstra on a caller-selected ROI that
+deliberately retains the space needed to route around its obstacle walls. Both
+demos report
 grid-rasterization, safety-inflation, and planning time and display the path in
 the occupancy-grid view and the world-coordinate MatPlotOpenCV figure. Pass an optional image
 filename as the first argument to save the world-coordinate figure before its
@@ -233,8 +291,9 @@ excludes `PolygonEnvironment` construction, including obstacle clipping. The
 operation-area rasterizer overload also selects its master-grid geometry.
 Safety-inflation time covers only `OccupancyGridInflator::inflate()`. The
 reported planning time covers only `AStarGridPlanner::plan()`; coordinate
-conversion and rendering are excluded. These are single-run diagnostics, not
-formal benchmarks.
+conversion and final rendering are excluded. In `--debug` mode, the synchronous
+callback's rendering and frame delays are included in planning time. These are
+single-run diagnostics, not formal benchmarks.
 
 A planning ROI restricts the search domain; it is not only a storage or display
 crop. A path that exists in the master grid may require cells outside the ROI,

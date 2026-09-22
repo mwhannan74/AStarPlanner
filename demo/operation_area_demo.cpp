@@ -21,6 +21,22 @@ int main(int argc, char* argv[])
     using namespace astar;
     using Clock = std::chrono::steady_clock;
 
+    bool debugVisualizationEnabled = false;
+    std::string outputFile;
+    for (int argumentIndex = 1; argumentIndex < argc; ++argumentIndex)
+    {
+        const std::string argument = argv[argumentIndex];
+        if (argument == "--debug")
+            debugVisualizationEnabled = true;
+        else if (outputFile.empty())
+            outputFile = argument;
+        else
+        {
+            std::cerr << "Usage: operation_area_demo [output-image] [--debug]\n";
+            return 1;
+        }
+    }
+
     // 1. Define the keep-in operation area and obstacle polygons in world
     // coordinates. Several obstacles intentionally cross or miss the boundary.
     const Polygon operationArea{
@@ -126,8 +142,6 @@ int main(int argc, char* argv[])
               << std::chrono::duration<double, std::milli>(inflationElapsed).count()
               << " ms\n";
 
-    const std::string outputFile = argc > 1 ? argv[1] : "";
-
     // 6. Convert world terminals using the ROI geometry, producing ROI-local
     // cells. masterCellOffset() relates those cells to the master grid.
     const auto startCell = planningGrid.geometry().worldToCell(start);
@@ -145,13 +159,46 @@ int main(int argc, char* argv[])
     const AStarGridPlanner gridPlanner;
     AStarOptions options;
     options.algorithm = GridSearchAlgorithm::Dijkstra;
+
+    GridSearchDebugCallback debugCallback;
+    if (debugVisualizationEnabled)
+    {
+        std::cout
+            << "Debug search animation enabled\n"
+            << "  white: unseen free cell\n"
+            << "  yellow: open/frontier cell\n"
+            << "  orange: cell currently being expanded\n"
+            << "  light blue: expanded cell\n"
+            << "  blue: final path\n"
+            << "  black: occupied cell\n"
+            << "  green/red markers: start/goal\n";
+        GridSearchStateRenderOptions debugView;
+        debugView.pixelsPerCell = 8;
+        debugCallback = [&, debugView, frame = std::size_t{ 0 }](
+            const cv::Mat1b& state) mutable
+        {
+            constexpr std::size_t expansionsPerFrame = 10;
+            constexpr int frameDelayMilliseconds = 10;
+            if (++frame % expansionsPerFrame != 0)
+                return;
+            showGridSearchState(
+                planningGrid,
+                state,
+                *startCell,
+                *goalCell,
+                debugView,
+                "AStarPlanner Search Debug");
+            cv::waitKey(frameDelayMilliseconds);
+        };
+    }
     const auto planningStartTime = Clock::now();
     const GridPlanResult plan = gridPlanner.plan(
-        planningGrid, *startCell, *goalCell, options);
+        planningGrid, *startCell, *goalCell, options, debugCallback);
     const auto planningElapsed = Clock::now() - planningStartTime;
     std::cout << gridSearchAlgorithmName(options.algorithm) << " planning: "
               << std::chrono::duration<double, std::milli>(planningElapsed).count()
-              << " ms\n"
+              << " ms"
+              << (debugVisualizationEnabled ? " including debug display\n" : "\n")
               << "Expanded nodes: " << plan.diagnostics.expandedNodes << '\n'
               << "Generated nodes: " << plan.diagnostics.generatedNodes << '\n'
               << "Peak open-set size: " << plan.diagnostics.peakOpenSetSize << '\n';

@@ -11,8 +11,10 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <queue>
+#include <utility>
 #include <vector>
 
 namespace astar
@@ -114,6 +116,26 @@ namespace astar
         }
     };
 
+    /** Values stored in the optional single-channel search-debug image. */
+    enum class GridSearchCellState : std::uint8_t
+    {
+        Unseen = 0,
+        Open = 1,
+        Current = 2,
+        Expanded = 3,
+        Path = 4,
+        Occupied = 255
+    };
+
+    /**
+     * Synchronous view of the planner's reusable debug-state image.
+     *
+     * The image is valid only for the duration of the callback and is modified
+     * after the callback returns. Clone it inside the callback when a frame must
+     * be retained or transferred to another thread.
+     */
+    using GridSearchDebugCallback = std::function<void(const cv::Mat1b&)>;
+
     /**
      * Planning entry point for an occupancy grid.
      *
@@ -127,6 +149,10 @@ namespace astar
      * deviation as a tie-breaker between equal-cost candidates. Weighted A* may
      * return a non-optimal path in exchange for reducing search effort.
      *
+     * Supplying @p debugCallback enables a reusable single-channel state image
+     * and synchronous callbacks after each accepted expansion and after the
+     * final path or exhausted search. An empty callback allocates no debug image.
+     *
      * @throws std::invalid_argument if options contain an unsupported search
      * algorithm or connectivity value.
      */
@@ -137,7 +163,8 @@ namespace astar
             const OccupancyGrid& grid,
             const GridCell& start,
             const GridCell& goal,
-            const AStarOptions& options = {}) const
+            const AStarOptions& options = {},
+            const GridSearchDebugCallback& debugCallback = {}) const
         {
             const double heuristicWeight = effectiveHeuristicWeight(options);
             if (options.connectivity != GridConnectivity::FourConnected &&
@@ -167,6 +194,26 @@ namespace astar
             std::vector<std::size_t> parents(cellCount, NO_PARENT);
             std::priority_queue<OpenNode, std::vector<OpenNode>, LowerCostFirst> open;
             GridPlanDiagnostics diagnostics;
+            const bool debugEnabled = static_cast<bool>(debugCallback);
+            cv::Mat1b debugState;
+            if (debugEnabled)
+            {
+                debugState = cv::Mat1b(
+                    grid.height(),
+                    grid.width(),
+                    static_cast<std::uint8_t>(GridSearchCellState::Unseen));
+                debugState.setTo(
+                    static_cast<std::uint8_t>(GridSearchCellState::Occupied),
+                    grid.imageView());
+            }
+
+            const auto setDebugState = [&grid, &debugState](
+                const GridCell& cell,
+                GridSearchCellState state)
+            {
+                const cv::Point pixel = grid.geometry().cellToImage(cell);
+                debugState(pixel.y, pixel.x) = static_cast<std::uint8_t>(state);
+            };
 
             costs[startIndex] = 0;
             open.push({
@@ -177,6 +224,8 @@ namespace astar
             });
             diagnostics.generatedNodes = 1;
             diagnostics.peakOpenSetSize = 1;
+            if (debugEnabled)
+                setDebugState(start, GridSearchCellState::Open);
 
             while (!open.empty())
             {
@@ -185,17 +234,28 @@ namespace astar
                 if (current.costFromStart != costs[current.index])
                     continue;
                 ++diagnostics.expandedNodes;
+                const GridCell currentCell = indexCell(grid, current.index);
+                if (debugEnabled)
+                    setDebugState(currentCell, GridSearchCellState::Current);
                 if (current.index == goalIndex)
                 {
                     diagnostics.pathCost = current.costFromStart;
+                    std::vector<GridCell> path = reconstructPath(
+                        grid, parents, startIndex, goalIndex);
+                    if (debugEnabled)
+                    {
+                        debugCallback(debugState);
+                        for (const GridCell& pathCell : path)
+                            setDebugState(pathCell, GridSearchCellState::Path);
+                        debugCallback(debugState);
+                    }
                     return {
                         GridPlanStatus::Success,
-                        reconstructPath(grid, parents, startIndex, goalIndex),
+                        std::move(path),
                         diagnostics
                     };
                 }
 
-                const GridCell currentCell = indexCell(grid, current.index);
                 for (const NeighborOffset& offset : NEIGHBOR_OFFSETS)
                 {
                     const bool diagonal = offset.column != 0 && offset.row != 0;
@@ -233,9 +293,18 @@ namespace astar
                     ++diagnostics.generatedNodes;
                     diagnostics.peakOpenSetSize = std::max(
                         diagnostics.peakOpenSetSize, open.size());
+                    if (debugEnabled)
+                        setDebugState(neighbor, GridSearchCellState::Open);
+                }
+                if (debugEnabled)
+                {
+                    debugCallback(debugState);
+                    setDebugState(currentCell, GridSearchCellState::Expanded);
                 }
             }
 
+            if (debugEnabled)
+                debugCallback(debugState);
             return { GridPlanStatus::NoPath, {}, diagnostics };
         }
 
