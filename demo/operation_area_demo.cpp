@@ -78,6 +78,7 @@ int main(int argc, char* argv[])
     // 3. Build an aligned master grid around the operation area. Rasterization
     // starts occupied, paints the operation area free, then paints obstacles.
     constexpr double gridResolution = 1.0;
+    constexpr double safetyRadius = 1.0;
     const auto gridStartTime = Clock::now();
     const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
         environment.operationArea(),
@@ -87,10 +88,20 @@ int main(int argc, char* argv[])
     // 4. Select a planning ROI. This caller-selected window retains the full
     // vertical span and therefore the routes around the alternating walls.
     const WorldBounds planningBounds{
-        Point2(4.0, 0.0),
-        Point2(96.0, 60.0)
+        Point2(3.0, 0.0),
+        Point2(97.0, 60.0)
     };
-    const OccupancyGrid planningGrid = masterGrid.subgrid(planningBounds);
+    const OccupancyGrid planningRegion = masterGrid.subgrid(planningBounds);
+
+    // 5. Inflate occupied cells and the ROI boundary. This tutorial deliberately
+    // treats the selected ROI as a hard planning boundary. If the ROI were only a
+    // performance crop within otherwise usable master-map space, the less
+    // restrictive order would be to inflate masterGrid first and then take its
+    // subgrid. The rasterized master and uninflated ROI remain unchanged here.
+    const auto inflationStartTime = Clock::now();
+    const OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
+        planningRegion, safetyRadius);
+    const auto inflationElapsed = Clock::now() - inflationStartTime;
 
     std::cout << "Input obstacles: " << obstacles.size() << '\n';
     std::cout << "Effective obstacles after clipping: "
@@ -105,15 +116,19 @@ int main(int argc, char* argv[])
               << planningGrid.width() << " x " << planningGrid.height()
               << " cells, master offset ("
               << planningGrid.masterCellOffset().column << ", "
-              << planningGrid.masterCellOffset().row << ")\n";
+              << planningGrid.masterCellOffset().row << ") with "
+              << safetyRadius << " world units of safety inflation\n";
     std::cout << std::fixed << std::setprecision(3)
               << "Grid rasterization: "
               << std::chrono::duration<double, std::milli>(gridElapsed).count()
+              << " ms\n"
+              << "Safety inflation: "
+              << std::chrono::duration<double, std::milli>(inflationElapsed).count()
               << " ms\n";
 
     const std::string outputFile = argc > 1 ? argv[1] : "";
 
-    // 5. Convert world terminals using the ROI geometry, producing ROI-local
+    // 6. Convert world terminals using the ROI geometry, producing ROI-local
     // cells. masterCellOffset() relates those cells to the master grid.
     const auto startCell = planningGrid.geometry().worldToCell(start);
     const auto goalCell = planningGrid.geometry().worldToCell(goal);
@@ -123,7 +138,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // 6. Plan inside the selected ROI. NoPath would only mean that no route
+    // 7. Plan inside the selected ROI. NoPath would only mean that no route
     // exists inside this ROI, not necessarily inside the complete master grid.
     const AStarGridPlanner gridPlanner;
     const auto planningStartTime = Clock::now();
@@ -139,7 +154,7 @@ int main(int argc, char* argv[])
                   << gridPlanStatusName(plan.status) << '\n';
         return 1;
     }
-    // 7. Convert the ROI-local cell path to world cell centers and render it.
+    // 8. Convert the ROI-local cell path to world cell centers and render it.
     const std::vector<Point2> worldPath = gridPathToWorld(planningGrid, plan.path);
     visualize(environment, start, goal, 1200, outputFile, worldPath);
 
@@ -151,7 +166,7 @@ int main(int argc, char* argv[])
 
     std::cout << "A* path: "
               << plan.path.size() << " cells\n";
-    showOccupancyGrid(planningGrid, gridView, "AStarPlanner Planning ROI");
+    showOccupancyGrid(planningGrid, gridView, "AStarPlanner Inflated Planning ROI");
     cv::waitKey(0);
     return 0;
 }

@@ -31,6 +31,7 @@ namespace
     using astar::GridPlanStatus;
     using astar::GridRegion;
     using astar::OccupancyGrid;
+    using astar::OccupancyGridInflator;
     using astar::Point2;
     using astar::Polygon;
     using astar::PolygonEnvironment;
@@ -520,6 +521,90 @@ namespace
                     geometry, static_cast<CellState>(1));
             },
             "occupancy grid should reject a non-binary initial cell state");
+    }
+
+    void inflationUsesConservativeCircularRadius()
+    {
+        const OccupancyGrid source = gridWithOccupiedCells(9, 9, { { 4, 4 } });
+        const OccupancyGrid inflated = OccupancyGridInflator::inflate(source, 1.01);
+
+        require(inflated.at({ 4, 4 }) == CellState::Occupied,
+            "inflation should retain the source obstacle");
+        require(inflated.at({ 6, 4 }) == CellState::Occupied &&
+                inflated.at({ 5, 5 }) == CellState::Occupied,
+            "world radius should round up to a two-cell circular kernel");
+        require(inflated.isTraversable({ 6, 5 }),
+            "circular inflation should exclude offsets outside its radius");
+        require(source.isTraversable({ 6, 4 }) && source.isTraversable({ 5, 5 }),
+            "inflation should not modify the source grid");
+    }
+
+    void inflationTreatsGridBoundaryAsOccupied()
+    {
+        const OccupancyGrid source(
+            GridGeometry(Point2(0.0, 0.0), 1.0, 7, 6),
+            CellState::Free);
+        const OccupancyGrid inflated = OccupancyGridInflator::inflate(source, 1.0);
+
+        for (int column = 0; column < inflated.width(); ++column)
+        {
+            require(!inflated.isTraversable({ column, 0 }) &&
+                    !inflated.isTraversable({ column, inflated.height() - 1 }),
+                "inflation should treat horizontal map boundaries as occupied");
+        }
+        for (int row = 0; row < inflated.height(); ++row)
+        {
+            require(!inflated.isTraversable({ 0, row }) &&
+                    !inflated.isTraversable({ inflated.width() - 1, row }),
+                "inflation should treat vertical map boundaries as occupied");
+        }
+        require(inflated.isTraversable({ 1, 1 }) &&
+                inflated.isTraversable({ 5, 4 }),
+            "one-cell boundary inflation should leave the remaining interior free");
+    }
+
+    void zeroInflationPreservesGridMetadataAndValidatesRadius()
+    {
+        const OccupancyGrid master = gridWithOccupiedCells(7, 7, { { 3, 3 } });
+        const OccupancyGrid source = master.subgrid({ { 1, 2 }, 5, 4 });
+        const OccupancyGrid inflated = OccupancyGridInflator::inflate(source, 0.0);
+
+        require(inflated.masterCellOffset() == source.masterCellOffset(),
+            "inflation should preserve the cumulative master-cell offset");
+        require(pointsNear(
+                inflated.geometry().worldOrigin(), source.geometry().worldOrigin()) &&
+                inflated.geometry().resolution() == source.geometry().resolution() &&
+                inflated.width() == source.width() && inflated.height() == source.height(),
+            "inflation should preserve grid geometry");
+        require(inflated.imageView().data != source.imageView().data,
+            "inflation should return independently owned pixels even at zero radius");
+
+        cv::Mat1b unequalPixels;
+        cv::compare(
+            inflated.imageView(), source.imageView(), unequalPixels, cv::CMP_NE);
+        require(cv::countNonZero(unequalPixels) == 0,
+            "zero-radius inflation should preserve every occupancy value");
+
+        requireThrows<std::invalid_argument>(
+            [&source]
+            {
+                static_cast<void>(OccupancyGridInflator::inflate(source, -0.1));
+            },
+            "inflation should reject a negative safety radius");
+        requireThrows<std::invalid_argument>(
+            [&source]
+            {
+                static_cast<void>(OccupancyGridInflator::inflate(
+                    source, std::numeric_limits<double>::quiet_NaN()));
+            },
+            "inflation should reject a non-finite safety radius");
+        requireThrows<std::invalid_argument>(
+            [&source]
+            {
+                static_cast<void>(OccupancyGridInflator::inflate(
+                    source, std::numeric_limits<double>::max()));
+            },
+            "inflation should reject an unrepresentable safety radius");
     }
 
     void operationAreaPaintsCoveredCellsFree()
@@ -1159,8 +1244,10 @@ namespace
         const PolygonEnvironment environment(operationArea, obstacles);
         const OccupancyGrid master = PolygonRasterizer::rasterize(
             environment.operationArea(), environment.effectiveObstacles(), 1.0);
-        const OccupancyGrid planningGrid = master.subgrid(
-            WorldBounds{ Point2(4.0, 0.0), Point2(96.0, 60.0) });
+        const OccupancyGrid planningRegion = master.subgrid(
+            WorldBounds{ Point2(3.0, 0.0), Point2(97.0, 60.0) });
+        const OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
+            planningRegion, 1.0);
         const auto start = planningGrid.geometry().worldToCell(Point2(5.0, 8.0));
         const auto goal = planningGrid.geometry().worldToCell(Point2(95.0, 52.0));
         require(start.has_value() && goal.has_value(),
@@ -1201,6 +1288,9 @@ namespace
         { "Aligned covering uses stable world lattice", alignedCoveringUsesStableWorldLattice },
         { "Polygon bounds size rectangular maps", polygonBoundsCanSizeRectangularMaps },
         { "Occupancy grid supports uniform initialization", occupancyGridSupportsUniformInitialization },
+        { "Inflation uses conservative circular radius", inflationUsesConservativeCircularRadius },
+        { "Inflation treats grid boundary as occupied", inflationTreatsGridBoundaryAsOccupied },
+        { "Zero inflation preserves metadata and validates radius", zeroInflationPreservesGridMetadataAndValidatesRadius },
         { "Rasterization paints covered cells", unconstrainedRasterizationPaintsCoveredCells },
         { "Operation area paints covered cells free", operationAreaPaintsCoveredCellsFree },
         { "Obstacle painting uses OpenCV coverage", obstaclePaintingUsesOpenCvCoverage },

@@ -421,6 +421,7 @@ namespace astar
         Occupied = 255
     };
 
+    class OccupancyGridInflator;
     class PolygonRasterizer;
 
     /**
@@ -585,6 +586,7 @@ namespace astar
         }
 
     private:
+        friend class OccupancyGridInflator;
         friend class PolygonRasterizer;
 
         static std::uint8_t cellValue(CellState state)
@@ -653,6 +655,96 @@ namespace astar
         GridGeometry _geometry;
         cv::Mat1b _occupancy;
         GridCell _masterCellOffset;
+    };
+
+    /**
+     * Creates independent binary grids with safety clearance around occupied cells.
+     *
+     * The safety radius is expressed in world units and is conservatively rounded
+     * up to a whole number of cells. Inflation uses a circular OpenCV dilation
+     * kernel. Pixels beyond the source image are treated as occupied, so the same
+     * clearance is enforced at the grid boundary. The source grid is not modified.
+     *
+     * When @p source is a cropped planning ROI, its edges are therefore treated as
+     * hard boundaries and receive the same clearance as obstacles. If an ROI is
+     * only a search or performance restriction within a larger known map, inflate
+     * the master grid first and then create the subgrid. That order preserves
+     * clearance from real obstacles and the master-map boundary without creating
+     * an artificial inflated obstacle around the ROI.
+     */
+    class OccupancyGridInflator
+    {
+    public:
+        static OccupancyGrid inflate(
+            const OccupancyGrid& source,
+            double safetyRadius)
+        {
+            const int radiusInCells = cellRadius(
+                safetyRadius, source.geometry().resolution());
+            if (radiusInCells == 0)
+            {
+                return OccupancyGrid(
+                    source.geometry(),
+                    source.cloneImage(),
+                    source.masterCellOffset());
+            }
+
+            cv::Mat1b inflated;
+            cv::dilate(
+                source.imageView(),
+                inflated,
+                circularKernel(radiusInCells),
+                cv::Point(-1, -1),
+                1,
+                cv::BORDER_CONSTANT | cv::BORDER_ISOLATED,
+                cv::Scalar(static_cast<std::uint8_t>(CellState::Occupied)));
+
+            return OccupancyGrid(
+                source.geometry(),
+                std::move(inflated),
+                source.masterCellOffset());
+        }
+
+    private:
+        static int cellRadius(double safetyRadius, double resolution)
+        {
+            if (!std::isfinite(safetyRadius) || safetyRadius < 0.0)
+            {
+                throw std::invalid_argument(
+                    "OccupancyGridInflator::inflate: safety radius must be finite and nonnegative");
+            }
+
+            const double radiusInCells = std::ceil(safetyRadius / resolution);
+            constexpr int maximumRadius =
+                (std::numeric_limits<int>::max() - 1) / 2;
+            if (!std::isfinite(radiusInCells) ||
+                radiusInCells > static_cast<double>(maximumRadius))
+            {
+                throw std::invalid_argument(
+                    "OccupancyGridInflator::inflate: safety radius is too large");
+            }
+            return static_cast<int>(radiusInCells);
+        }
+
+        static cv::Mat1b circularKernel(int radius)
+        {
+            const int size = 2 * radius + 1;
+            cv::Mat1b kernel(size, size, std::uint8_t{ 0 });
+            const double squaredRadius =
+                static_cast<double>(radius) * static_cast<double>(radius);
+
+            for (int row = 0; row < size; ++row)
+            {
+                const double y = static_cast<double>(row - radius);
+                for (int column = 0; column < size; ++column)
+                {
+                    const double x = static_cast<double>(column - radius);
+                    if (x * x + y * y <= squaredRadius)
+                        kernel(row, column) = 1;
+                }
+            }
+            return kernel;
+        }
     };
 
     /** Converts an ordered grid path to the world positions of its cell centers. */

@@ -1,8 +1,8 @@
 // a_star_planner_demo.cpp - Basic full-grid planning tutorial.
 //
 // This example has no operation area. It shows how to validate world-coordinate
-// obstacles, choose an explicit master-grid extent, rasterize it, plan on the
-// complete grid, and convert the resulting cell path back to world coordinates.
+// obstacles, choose an explicit master-grid extent, rasterize and inflate it,
+// plan on the complete grid, and convert the resulting path to world coordinates.
 
 #include "a_star_planner.hpp"
 #include "a_star_grid_planner.hpp"
@@ -67,7 +67,8 @@ int main(int argc, char* argv[])
         obstacleBounds.maximum.y() + gap + terminalOffset(generator));
 
     constexpr double gridResolution = 1.0;
-    const double mapPadding = gridResolution;
+    constexpr double safetyRadius = 1.0;
+    const double mapPadding = safetyRadius + gridResolution;
     const WorldBounds mapBounds{
         Point2(
             std::min(obstacleBounds.minimum.x(), start.x()) - mapPadding,
@@ -86,9 +87,14 @@ int main(int argc, char* argv[])
         gridGeometry, environment.effectiveObstacles());
     const auto gridElapsed = Clock::now() - gridStartTime;
 
-    // 5. Choose the planning domain. This basic example uses the complete
-    // master map so a valid detour cannot be removed by an unsafe ROI crop.
-    const OccupancyGrid& planningGrid = masterGrid;
+    // 5. Inflate obstacles and the map boundary into a separate planning grid.
+    // This example treats the full master-map edge as the limit of known space,
+    // so enforcing clearance from it is intentional. The raw master grid remains
+    // available for other clearance choices.
+    const auto inflationStartTime = Clock::now();
+    const OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
+        masterGrid, safetyRadius);
+    const auto inflationElapsed = Clock::now() - inflationStartTime;
 
     std::cout << "Environment has " << environment.effectiveObstacles().size()
               << " effective obstacles\n";
@@ -98,14 +104,18 @@ int main(int argc, char* argv[])
               << " world units per cell\n";
     std::cout << "Planning grid (full master map): "
               << planningGrid.width() << " x " << planningGrid.height()
-              << " cells\n";
+              << " cells with " << safetyRadius
+              << " world units of safety inflation\n";
     std::cout << std::fixed << std::setprecision(3)
               << "Grid rasterization: "
               << std::chrono::duration<double, std::milli>(gridElapsed).count()
+              << " ms\n"
+              << "Safety inflation: "
+              << std::chrono::duration<double, std::milli>(inflationElapsed).count()
               << " ms\n";
     const std::string outputFile = argc > 1 ? argv[1] : "";
 
-    // 6. Convert world terminals to cells in the selected planning grid.
+    // 6. Convert world terminals to cells in the inflated planning grid.
     const auto startCell = planningGrid.geometry().worldToCell(start);
     const auto goalCell = planningGrid.geometry().worldToCell(goal);
     if (!startCell || !goalCell)
@@ -142,7 +152,7 @@ int main(int argc, char* argv[])
 
     std::cout << "A* path: "
               << plan.path.size() << " cells\n";
-    showOccupancyGrid(planningGrid, gridView, "AStarPlanner Master Grid");
+    showOccupancyGrid(planningGrid, gridView, "AStarPlanner Inflated Planning Grid");
 
     cv::waitKey(0);
     return 0;

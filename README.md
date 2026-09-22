@@ -20,6 +20,7 @@ reusable environment model, occupancy grid, and working A* planner. It supports:
 - explicit cell-sized, world-bounds-sized, and polygon-sized grids
 - optional alignment to a stable world-coordinate lattice
 - OpenCV-accelerated operation-area and obstacle rasterization
+- OpenCV-accelerated binary safety inflation in world units
 - master maps with shared or independently copied planning subgrids
 - eight-connected A* search with optional four-connected movement
 - unit orthogonal and `sqrt(2)` diagonal costs with matching heuristics
@@ -77,7 +78,9 @@ the operation area free, and then paints effective obstacles occupied. Without
 an operation area, rasterization starts free and paints obstacles occupied.
 OpenCV filled-polygon pixel coverage determines which cells change state; the
 current rasterizer does not conservatively mark every cell geometrically touched
-by a polygon. Robot-radius inflation and clearance costs are not yet provided.
+by a polygon. `OccupancyGridInflator` can produce an independent binary grid
+with a requested world-space safety radius around occupied cells and grid
+boundaries. Graded clearance costs are not yet provided.
 
 `AStarGridPlanner` uses eight-connected movement by default. Orthogonal moves
 cost `1`, diagonal moves cost `sqrt(2)`, and diagonal corner cutting is prevented
@@ -170,14 +173,15 @@ from the operation area's bounding box, paints that area free, and then paints
 the effective obstacles occupied. The first demo plans on its complete master
 grid. The second demonstrates a caller-selected ROI that deliberately retains
 the space needed to route around its obstacle walls. Both demos report
-grid-rasterization and planning time and display the path in the occupancy-grid
-view and the world-coordinate MatPlotOpenCV figure. Pass an optional image
+grid-rasterization, safety-inflation, and planning time and display the path in
+the occupancy-grid view and the world-coordinate MatPlotOpenCV figure. Pass an optional image
 filename as the first argument to save the world-coordinate figure before its
 windows are displayed.
 
 The reported grid time begins immediately before the rasterizer call and
 excludes `PolygonEnvironment` construction, including obstacle clipping. The
-operation-area rasterizer overload also selects its master-grid geometry. The
+operation-area rasterizer overload also selects its master-grid geometry.
+Safety-inflation time covers only `OccupancyGridInflator::inflate()`. The
 reported planning time covers only `AStarGridPlanner::plan()`; coordinate
 conversion and rendering are excluded. These are single-run diagnostics, not
 formal benchmarks.
@@ -211,7 +215,7 @@ automatic expanding-ROI retry policy is not currently provided.
 
 ## Using the planner: basic workflow
 
-A normal planning request has eight explicit steps:
+A normal planning request has nine explicit steps:
 
 1. Define convex obstacle polygons and, optionally, a convex operation area in
    world coordinates.
@@ -219,9 +223,10 @@ A normal planning request has eight explicit steps:
 3. Choose the grid resolution and master-map extent.
 4. Use `PolygonRasterizer` to create the OpenCV-backed occupancy grid.
 5. Plan on the full master grid or select a deliberately sized planning ROI.
-6. Convert world start and goal points with the selected grid's `worldToCell()`.
-7. Call `AStarGridPlanner::plan()` and check `GridPlanResult::succeeded()`.
-8. Convert the returned cells to world-space cell centers with
+6. Use `OccupancyGridInflator` to create a safety-inflated planning grid.
+7. Convert world start and goal points with the selected grid's `worldToCell()`.
+8. Call `AStarGridPlanner::plan()` and check `GridPlanResult::succeeded()`.
+9. Convert the returned cells to world-space cell centers with
    `gridPathToWorld()` when world-coordinate output is required.
 
 The following minimal example uses an operation area and plans on its complete
@@ -254,8 +259,10 @@ int main()
     };
     PolygonEnvironment environment(operationArea, obstacles);
 
-    const OccupancyGrid planningGrid = PolygonRasterizer::rasterize(
+    const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
         environment.operationArea(), environment.effectiveObstacles(), 0.5);
+    const OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
+        masterGrid, 0.5);
 
     const Point2 worldStart(1.0, 1.0);
     const Point2 worldGoal(9.0, 9.0);
@@ -300,6 +307,47 @@ non-contiguous. `IndependentCopy` owns a deep copy of the selected pixels.
 zero-copy OpenCV view whose shared storage must be treated as read-only;
 `cloneImage()` returns an independent image suitable for modification. The
 deprecated `image()` name remains temporarily available for source compatibility.
+
+`OccupancyGridInflator::inflate()` accepts a nonnegative safety radius in world
+units, rounds it up to a whole-cell radius, and applies a circular OpenCV
+dilation kernel. It returns independent storage with the same geometry and
+master-cell offset. The source grid is unchanged, and space beyond every edge
+of the inflated grid is treated as occupied.
+
+### Inflation boundaries and planning ROIs
+
+The edge of the grid passed to `OccupancyGridInflator` is treated as the limit
+of known or permitted space. Inflation therefore creates an occupied band along
+that edge whose thickness grows with the requested safety radius. This is the
+safe behavior for a complete map, an operation-area boundary, or any map whose
+outside space is unknown.
+
+The order of inflation and cropping matters. Inflate a planning ROI directly
+when the ROI itself is intended to be a hard boundary:
+
+```cpp
+const OccupancyGrid planningRegion = masterGrid.subgrid(planningBounds);
+const OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
+    planningRegion, safetyRadius);
+```
+
+This adds clearance around obstacles and every ROI edge. It can occupy a nearby
+start or goal, remove a route along the edge, or eliminate all free space in a
+narrow ROI.
+
+When an ROI is only a search or performance restriction inside a larger known
+map, inflate the master map first and crop afterward:
+
+```cpp
+const OccupancyGrid inflatedMaster = OccupancyGridInflator::inflate(
+    masterGrid, safetyRadius);
+const OccupancyGrid planningGrid = inflatedMaster.subgrid(planningBounds);
+```
+
+This preserves clearance from actual obstacles and the master-map boundary
+without introducing an artificial inflated obstacle around the ROI. The basic
+demo inflates its complete master map. The operation-area demo intentionally
+uses the first form to demonstrate a caller-selected hard planning boundary.
 
 ## License
 
