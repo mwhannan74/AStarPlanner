@@ -144,11 +144,20 @@ Or use CTest:
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-## Demos
+## Tutorial demos
 
-The two demos visualize both the retained polygon environment and its generated
-occupancy grid. The deterministic operation-area demo also exercises a cropped
-planning ROI and displays the obstacle-avoiding A* result.
+The annotated demos are executable tutorials for the complete planning workflow:
+
+- [`a_star_planner_demo.cpp`](demo/a_star_planner_demo.cpp) starts with obstacle
+  polygons, explicitly sizes a master grid, plans on the full grid, and renders
+  the result. Its pseudo-random obstacle field uses a fixed seed so runs are
+  repeatable.
+- [`operation_area_demo.cpp`](demo/operation_area_demo.cpp) adds an operation
+  area, obstacle clipping, master-map construction, and a caller-selected
+  planning ROI.
+
+Both examples label the major steps in code and visualize the polygon world,
+occupancy grid, terminals, and resulting A* path.
 
 ```powershell
 .\build\Release\a_star_planner_demo.exe
@@ -156,7 +165,7 @@ planning ROI and displays the obstacle-avoiding A* result.
 ```
 
 The first demo builds an explicit world-aligned rectangular grid around a
-randomized field of polygon obstacles. The second builds a master grid directly
+nonuniform field of polygon obstacles. The second builds a master grid directly
 from the operation area's bounding box, paints that area free, and then paints
 the effective obstacles occupied. The first demo plans on its complete master
 grid. The second demonstrates a caller-selected ROI that deliberately retains
@@ -200,7 +209,23 @@ automatic expanding-ROI retry policy is not currently provided.
 - `a_star_planner_demo` — unconstrained-environment demo
 - `operation_area_demo` — operation-area and clipping demo
 
-## Basic usage
+## Using the planner: basic workflow
+
+A normal planning request has eight explicit steps:
+
+1. Define convex obstacle polygons and, optionally, a convex operation area in
+   world coordinates.
+2. Construct `PolygonEnvironment` to validate, normalize, and clip that geometry.
+3. Choose the grid resolution and master-map extent.
+4. Use `PolygonRasterizer` to create the OpenCV-backed occupancy grid.
+5. Plan on the full master grid or select a deliberately sized planning ROI.
+6. Convert world start and goal points with the selected grid's `worldToCell()`.
+7. Call `AStarGridPlanner::plan()` and check `GridPlanResult::succeeded()`.
+8. Convert the returned cells to world-space cell centers with
+   `gridPathToWorld()` when world-coordinate output is required.
+
+The following minimal example uses an operation area and plans on its complete
+master grid:
 
 ```cpp
 #include "a_star_planner.hpp"
@@ -255,6 +280,12 @@ int main()
     return 0;
 }
 ```
+
+For fully annotated and visualized versions of this workflow, see the
+[full-grid tutorial](demo/a_star_planner_demo.cpp) and the
+[operation-area/ROI tutorial](demo/operation_area_demo.cpp).
+
+### Grid and ROI choices
 
 `GridGeometry(origin, resolution, width, height)` provides explicit cell-sized
 maps. `GridGeometry::covering(...)` derives rectangular cell dimensions from

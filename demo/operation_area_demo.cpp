@@ -1,4 +1,8 @@
-// operation_area_demo.cpp - Deterministic operation-area and clipping demo.
+// operation_area_demo.cpp - Operation-area and planning-ROI tutorial.
+//
+// This example adds a convex keep-in area, obstacles that require clipping,
+// and a caller-selected planning ROI. The planning steps otherwise match the
+// basic full-grid demo.
 
 #include "a_star_planner.hpp"
 #include "a_star_grid_planner.hpp"
@@ -17,6 +21,8 @@ int main(int argc, char* argv[])
     using namespace astar;
     using Clock = std::chrono::steady_clock;
 
+    // 1. Define the keep-in operation area and obstacle polygons in world
+    // coordinates. Several obstacles intentionally cross or miss the boundary.
     const Polygon operationArea{
         Point2(0.0, 0.0),
         Point2(100.0, 0.0),
@@ -65,7 +71,12 @@ int main(int argc, char* argv[])
 
     const Point2 start(5.0, 8.0);
     const Point2 goal(95.0, 52.0);
-    PolygonEnvironment environment(operationArea, obstacles);
+
+    // 2. Validate the polygons and clip obstacles to the operation area.
+    const PolygonEnvironment environment(operationArea, obstacles);
+
+    // 3. Build an aligned master grid around the operation area. Rasterization
+    // starts occupied, paints the operation area free, then paints obstacles.
     constexpr double gridResolution = 1.0;
     const auto gridStartTime = Clock::now();
     const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
@@ -73,8 +84,8 @@ int main(int argc, char* argv[])
         environment.effectiveObstacles(),
         gridResolution);
     const auto gridElapsed = Clock::now() - gridStartTime;
-    // This caller-selected ROI retains the operation area's full vertical span,
-    // including the available routes around the alternating obstacle walls.
+    // 4. Select a planning ROI. This caller-selected window retains the full
+    // vertical span and therefore the routes around the alternating walls.
     const WorldBounds planningBounds{
         Point2(4.0, 0.0),
         Point2(96.0, 60.0)
@@ -102,6 +113,8 @@ int main(int argc, char* argv[])
 
     const std::string outputFile = argc > 1 ? argv[1] : "";
 
+    // 5. Convert world terminals using the ROI geometry, producing ROI-local
+    // cells. masterCellOffset() relates those cells to the master grid.
     const auto startCell = planningGrid.geometry().worldToCell(start);
     const auto goalCell = planningGrid.geometry().worldToCell(goal);
     if (!startCell || !goalCell)
@@ -110,6 +123,8 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // 6. Plan inside the selected ROI. NoPath would only mean that no route
+    // exists inside this ROI, not necessarily inside the complete master grid.
     const AStarGridPlanner gridPlanner;
     const auto planningStartTime = Clock::now();
     const GridPlanResult plan = gridPlanner.plan(
@@ -124,6 +139,7 @@ int main(int argc, char* argv[])
                   << gridPlanStatusName(plan.status) << '\n';
         return 1;
     }
+    // 7. Convert the ROI-local cell path to world cell centers and render it.
     const std::vector<Point2> worldPath = gridPathToWorld(planningGrid, plan.path);
     visualize(environment, start, goal, 1200, outputFile, worldPath);
 

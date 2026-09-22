@@ -1,5 +1,8 @@
-// a_star_planner_demo.cpp - Environment demo with 25 non-overlapping obstacles.
-// Build with the a_star_planner_demo CMake target; see README.md for instructions.
+// a_star_planner_demo.cpp - Basic full-grid planning tutorial.
+//
+// This example has no operation area. It shows how to validate world-coordinate
+// obstacles, choose an explicit master-grid extent, rasterize it, plan on the
+// complete grid, and convert the resulting cell path back to world coordinates.
 
 #include "a_star_planner.hpp"
 #include "a_star_grid_planner.hpp"
@@ -11,7 +14,6 @@
 #include <chrono>
 #include <iomanip>
 #include <iostream>
-#include <limits>
 #include <random>
 #include <string>
 #include <vector>
@@ -22,13 +24,15 @@ int main(int argc, char* argv[])
 {
     using Clock = std::chrono::steady_clock;
 
+    // 1. Define obstacle polygons in world coordinates. A fixed random seed
+    // keeps the tutorial repeatable while producing a nonuniform obstacle field.
     const int rows = 5;
     const int columns = 5;
     const double obstacleSize = 5.0;
     const double gap = 5.0;
     const double noise = gap * 0.5;
 
-    std::mt19937 generator(std::random_device{}());
+    std::mt19937 generator(7);
     std::uniform_real_distribution<double> noiseDistribution(-noise, noise);
 
     std::vector<Polygon> obstacles;
@@ -47,47 +51,43 @@ int main(int argc, char* argv[])
         }
     }
 
-    PolygonEnvironment environment(obstacles);
+    // 2. Validate and normalize the polygon environment.
+    const PolygonEnvironment environment(obstacles);
+    const WorldBounds obstacleBounds = GridGeometry::boundingBox(
+        environment.effectiveObstacles());
 
-    double minimumX = std::numeric_limits<double>::infinity();
-    double minimumY = std::numeric_limits<double>::infinity();
-    double maximumX = -std::numeric_limits<double>::infinity();
-    double maximumY = -std::numeric_limits<double>::infinity();
-    for (const auto& obstacle : obstacles)
-    {
-        for (const auto& point : obstacle)
-        {
-            minimumX = std::min(minimumX, point.x());
-            minimumY = std::min(minimumY, point.y());
-            maximumX = std::max(maximumX, point.x());
-            maximumY = std::max(maximumY, point.y());
-        }
-    }
-
+    // 3. Select world-coordinate terminals and a grid extent that contains the
+    // obstacles and terminals. Resolution is world units per grid cell.
     std::uniform_real_distribution<double> terminalOffset(0.0, 2.0 * gap);
     const Point2 start(
-        minimumX - gap - terminalOffset(generator),
-        minimumY - gap - terminalOffset(generator));
+        obstacleBounds.minimum.x() - gap - terminalOffset(generator),
+        obstacleBounds.minimum.y() - gap - terminalOffset(generator));
     const Point2 goal(
-        maximumX + gap + terminalOffset(generator),
-        maximumY + gap + terminalOffset(generator));
+        obstacleBounds.maximum.x() + gap + terminalOffset(generator),
+        obstacleBounds.maximum.y() + gap + terminalOffset(generator));
 
     constexpr double gridResolution = 1.0;
     const double mapPadding = gridResolution;
     const WorldBounds mapBounds{
         Point2(
-            std::min(minimumX, start.x()) - mapPadding,
-            std::min(minimumY, start.y()) - mapPadding),
+            std::min(obstacleBounds.minimum.x(), start.x()) - mapPadding,
+            std::min(obstacleBounds.minimum.y(), start.y()) - mapPadding),
         Point2(
-            std::max(maximumX, goal.x()) + mapPadding,
-            std::max(maximumY, goal.y()) + mapPadding)
+            std::max(obstacleBounds.maximum.x(), goal.x()) + mapPadding,
+            std::max(obstacleBounds.maximum.y(), goal.y()) + mapPadding)
     };
     const GridGeometry gridGeometry = GridGeometry::alignedCovering(
         mapBounds, gridResolution);
+
+    // 4. Rasterize effective obstacles into a free master grid. With no
+    // operation area, only pixels covered by obstacles become occupied.
     const auto gridStartTime = Clock::now();
     const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
         gridGeometry, environment.effectiveObstacles());
     const auto gridElapsed = Clock::now() - gridStartTime;
+
+    // 5. Choose the planning domain. This basic example uses the complete
+    // master map so a valid detour cannot be removed by an unsafe ROI crop.
     const OccupancyGrid& planningGrid = masterGrid;
 
     std::cout << "Environment has " << environment.effectiveObstacles().size()
@@ -105,6 +105,7 @@ int main(int argc, char* argv[])
               << " ms\n";
     const std::string outputFile = argc > 1 ? argv[1] : "";
 
+    // 6. Convert world terminals to cells in the selected planning grid.
     const auto startCell = planningGrid.geometry().worldToCell(start);
     const auto goalCell = planningGrid.geometry().worldToCell(goal);
     if (!startCell || !goalCell)
@@ -113,6 +114,8 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // 7. Run A*. Default options use eight-connected movement and prevent
+    // diagonal corner cutting.
     const AStarGridPlanner gridPlanner;
     const auto planningStartTime = Clock::now();
     const GridPlanResult plan = gridPlanner.plan(
@@ -127,6 +130,7 @@ int main(int argc, char* argv[])
                   << gridPlanStatusName(plan.status) << '\n';
         return 1;
     }
+    // 8. Convert cell centers back to world coordinates and render both views.
     const std::vector<Point2> worldPath = gridPathToWorld(planningGrid, plan.path);
     visualize(environment, start, goal, 1200, outputFile, worldPath);
 
