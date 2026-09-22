@@ -2,11 +2,8 @@
  * a_star_planner.hpp – Environment model for the AStarPlanner library.
  *
  * ────
- * This conversion retains the polygon and operation-area model from
- * VisGraphPlanner. Occupancy-grid construction is provided separately by
- * occupancy_grid.hpp; A* search will be added in a later step. The former
- * visibility-graph planner is disabled below so it cannot accidentally remain
- * part of the active AStarPlanner implementation.
+ * Provides validated polygon and operation-area geometry for grid-based
+ * planning. Occupancy-grid construction and A* search are provided separately.
  * ────
  */
 #pragma once
@@ -15,7 +12,6 @@
 #include <Eigen/Core>
 #include <cmath>
 #include <cstddef>
-#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -30,21 +26,8 @@ namespace astar
     using Polygon = std::vector<Point2>;   // Ordered vertices; validated by AStarPlanner.
     struct Segment2 { Point2 a, b; };
 
-#if 0 // Legacy visibility-graph-only types; retained temporarily for reference.
-    struct Edge { std::size_t to; double cost; };
-    struct Vertex { Point2 pos; int poly_id; bool is_query; };
-#endif
-
     // Base relative tolerance used by scale-aware geometric predicates.
     inline constexpr double EPS = 1e-12;
-
-    /**
-     * Position of a point relative to a simple CCW polygon.
-     * Inside: strictly inside the polygon area
-     * OnEdge: collinear with, and lying on, an edge or vertex
-     * Outside: strictly outside
-     */
-    enum class PointLocation { Outside, OnEdge, Inside };
 
     /**
      * @class AStarPlanner
@@ -56,7 +39,7 @@ namespace astar
         /**
          * @brief Construct from a list of convex, simple polygons.
          *
-         * Finite obstacle polygons with <3 vertices are skipped with a warning.
+         * Finite obstacle polygons with <3 vertices are ignored.
          * Valid polygons are normalized before their effective geometry is
          * retained. Polygons are converted to counter-clockwise
          * order. A repeated closing point, consecutive duplicates, and
@@ -97,162 +80,6 @@ namespace astar
             initializeObstacles(obstacles);
         }
 
-#if 0 // Legacy visibility-graph planning API; intentionally disabled.
-        /**
-         * @brief Build the obstacle-only visibility graph (O(N³)).
-         *
-         * Recomputes _adjacency from scratch using naive all-pairs
-         * visibility checks. Previously injected query vertices are removed.
-         */
-        void buildBasic()
-        {
-            _vertices.resize(_obstacleVertexCount);
-            const std::size_t n = _obstacleVertexCount;
-            _adjacency.assign(n, {});
-            for (auto& nbrs : _adjacency)
-                nbrs.reserve(6);
-
-            // All-pairs visibility test
-            for (std::size_t i = 0; i < n; ++i)
-                for (std::size_t j = i + 1; j < n; ++j)
-                    if (visible(i, j))
-                        addEdge(i, j);
-
-            _obstacleAdjacency = _adjacency;
-            _isBuilt = true;
-        }
-
-
-        /**
-         * @brief Inject start & goal terminals and connect them.
-         *
-         * @param S Start position.
-         * @param G Goal position.
-         * @return Pair of vertex indices (S,G) within the graph.
-         *
-         * @pre buildBasic() has been called for the obstacle graph.
-         * @throws std::logic_error if buildBasic() has not been called.
-         * @throws std::invalid_argument if S or G contains a non-finite
-         * coordinate.
-         * @throws std::runtime_error if S or G is inside an obstacle or on its
-         * boundary, or is not strictly inside the operation area when one is
-         * configured.
-         *
-         * Any previous query vertices are removed before the new query is
-         * inserted. If S and G are coincident within the scale-aware point
-         * tolerance, one query vertex is inserted and its index is returned
-         * for both endpoints.
-         *
-         * Complexity O(N²) for each inserted point.
-         */
-        std::pair<std::size_t, std::size_t>
-        injectQueryPts(const Point2& S, const Point2& G)
-        {
-            if (!_isBuilt)
-                throw std::logic_error("injectQueryPts: buildBasic() must be called first");
-
-            if (!isFinite(S))
-                throw std::invalid_argument(
-                    "injectQueryPts: Start contains a non-finite coordinate");
-            if (!isFinite(G))
-                throw std::invalid_argument(
-                    "injectQueryPts: Goal contains a non-finite coordinate");
-
-            if (_hasOperationArea)
-            {
-                if (pointInPolygon(S, _operationArea) != PointLocation::Inside)
-                    throw std::runtime_error(
-                        "injectQueryPts: Start must be strictly inside the operation area");
-                if (pointInPolygon(G, _operationArea) != PointLocation::Inside)
-                    throw std::runtime_error(
-                        "injectQueryPts: Goal must be strictly inside the operation area");
-            }
-
-            // Reject points inside or on an obstacle boundary.
-            for (const auto& poly : _obstacles)
-            {
-                if (pointInPolygon(S, poly) != PointLocation::Outside)
-                    throw std::runtime_error("injectQueryPts: Start inside or on obstacle");
-                if (pointInPolygon(G, poly) != PointLocation::Outside)
-                    throw std::runtime_error("injectQueryPts: Goal inside or on obstacle");
-            }
-
-            restoreObstacleGraph();
-
-            const std::size_t sid = addVertex(S, /*query=*/true, -1);
-            connectQueryVertex(sid);
-
-            if (pointsNear(S, G))
-                return { sid, sid };
-
-            const std::size_t gid = addVertex(G, /*query=*/true, -1);
-            connectQueryVertex(gid);
-            return { sid, gid };
-        }
-
-        /**
-         * @brief Dijkstra shortest path in visibility graph.
-         *
-         * @param s Source vertex index.
-         * @param g Target vertex index.
-         * @return Sequence of points from @p s to @p g (inclusive); empty if
-         *         no path exists.
-         *
-         * @pre The relevant graph edges have been created by buildBasic() and,
-         * for query vertices, injectQueryPts().
-         * @throws std::out_of_range if s or g is not a valid vertex index.
-         *
-         * Complexity O(E log V) with binary heap.
-         */
-        [[nodiscard]]
-        std::vector<Point2> shortestPath(std::size_t s,
-            std::size_t g) const
-        {
-            if (s >= _vertices.size() || g >= _vertices.size())
-                throw std::out_of_range(
-                    "shortestPath: source and goal must be valid vertex indices");
-
-            const double INF = std::numeric_limits<double>::infinity();
-            const std::size_t N = _vertices.size();
-
-            std::vector<double>       dist(N, INF);
-            std::vector<std::size_t>  prev(N, N);
-
-            using Q = std::pair<double, std::size_t>;
-            std::priority_queue<Q, std::vector<Q>, std::greater<>> pq;
-
-            dist[s] = 0.0;
-            pq.emplace(0.0, s);
-
-            while (!pq.empty())
-            {
-                const auto [d, u] = pq.top();
-                pq.pop();
-                if (d > dist[u]) continue;   // stale
-                if (u == g) break;           // reached goal
-
-                for (const auto& e : _adjacency[u])
-                {
-                    const double alt = d + e.cost;
-                    if (alt < dist[e.to])
-                    {
-                        dist[e.to] = alt;
-                        prev[e.to] = u;
-                        pq.emplace(alt, e.to);
-                    }
-                }
-            }
-
-            if (dist[g] == INF) return {};   // no path
-
-            std::vector<Point2> path;
-            for (auto v = g; v != N; v = prev[v])
-                path.push_back(_vertices[v].pos);
-            std::reverse(path.begin(), path.end());
-            return path;
-        }
-#endif
-
         // Read-only getters
         bool hasOperationArea() const { return _hasOperationArea; }
 
@@ -270,19 +97,8 @@ namespace astar
         // Positive-area effective obstacles whose geometry changed during clipping.
         const std::vector<Polygon>& clippedObstacles() const { return _clippedObstacles; }
 
-        // Effective obstacles available to the future occupancy-grid builder.
+        // Effective obstacles available to occupancy-grid builders.
         const std::vector<Polygon>& obstacles() const { return _obstacles; }
-#if 0 // Legacy visibility-graph inspection API; intentionally disabled.
-        const std::vector<Vertex>& vertices()  const { return _vertices; }
-        const std::vector<std::vector<Edge>>& adjacency() const { return _adjacency; }
-        
-        std::size_t numEdges() const
-        {
-            std::size_t half = 0;
-            for (auto& nbrs : _adjacency) half += nbrs.size();
-            return half / 2;
-        }
-#endif
 
     private:
         friend class PolygonRasterizer;
@@ -293,7 +109,7 @@ namespace astar
         }
 
         /**
-         * @brief Validates, filters, and flattens input obstacles.
+         * @brief Validates and filters input obstacles.
          */
         void initializeObstacles(const std::vector<Polygon>& obstacles)
         {
@@ -308,11 +124,7 @@ namespace astar
                     }
                 }
                 if (poly.size() < 3)
-                {
-                    std::cerr << "[AStarPlanner] Warning: polygon with " << poly.size()
-                              << " vertex/vertices ignored (need >=3).\n";
                     continue;
-                }
                 Polygon normalizedObstacle = normalizePolygon(poly, "obstacle");
 
                 _originalObstacles.push_back(normalizedObstacle);
@@ -645,128 +457,6 @@ namespace astar
         std::vector<Polygon>              _originalObstacles;
         std::vector<Polygon>              _clippedObstacles;
         std::vector<Polygon>              _obstacles; // Effective obstacle geometry.
-#if 0 // Legacy visibility-graph storage; intentionally disabled.
-        std::vector<Vertex>               _vertices;  // Obstacle vertices plus active queries.
-        std::vector<std::vector<Edge>>    _adjacency; // Neighbors for each active vertex.
-        std::vector<std::vector<Edge>>    _obstacleAdjacency; // Cached obstacle-only graph.
-        std::size_t                       _obstacleVertexCount = 0;
-        bool                              _isBuilt = false;
-#endif
-
-#if 0 // Legacy visibility-graph construction and visibility tests.
-        /**
-         * @brief Removes query vertices and restores cached obstacle-only edges.
-         */
-        void restoreObstacleGraph()
-        {
-            _vertices.resize(_obstacleVertexCount);
-            _adjacency = _obstacleAdjacency;
-        }
-
-        /**
-         * @brief Adds a new vertex to the graph.
-         *
-         * This method appends a vertex to the internal vertex list and initializes
-         * an empty adjacency list entry for it.
-         *
-         * @param p      The 2D point position of the vertex.
-         * @param query  True if this vertex is a query point (e.g. start/goal), false if part of an obstacle.
-         * @param pid    Polygon ID this vertex belongs to; -1 for query vertices.
-         * @return The index of the newly added vertex.
-         */
-        std::size_t addVertex(const Point2& p, bool query, int pid)
-        {
-            _vertices.push_back({ p, pid, query });
-            _adjacency.push_back({});
-            return _vertices.size() - 1;
-        }
-
-        /**
-         * @brief Adds an undirected edge between two existing vertices.
-         *
-         * The edge weight is the Euclidean distance between the two vertices.
-         * Adds the edge in both directions (i → j and j → i).
-         *
-         * @param i Index of the first vertex.
-         * @param j Index of the second vertex.
-         */
-        void addEdge(std::size_t i, std::size_t j)
-        {
-            assert(i < _vertices.size() && j < _vertices.size());
-
-            const double w = (_vertices[i].pos - _vertices[j].pos).norm();
-            _adjacency[i].push_back({ j, w });
-            _adjacency[j].push_back({ i, w });
-        }
-
-        /**
-         * @brief Determines if two vertices are mutually visible.
-         *
-         * Checks whether the line segment between two vertices intersects any obstacle edge.
-         * Obstacle edges incident to either candidate endpoint are skipped so
-         * a path may meet or follow an obstacle at one of its vertices.
-         * Also rejects chords lying entirely within a polygon.
-         *
-         * @param i Index of the first vertex.
-         * @param j Index of the second vertex.
-         * @return True if the segment i–j is visible (not blocked by any obstacle), false otherwise.
-         */
-        bool visible(std::size_t i, std::size_t j) const
-        {
-            assert(i < _vertices.size() && j < _vertices.size());
-
-            const Segment2 seg{ _vertices[i].pos, _vertices[j].pos };
-            if (pointsNear(seg.a, seg.b)) return false;
-
-            // Skip obstacle edges incident to a candidate endpoint using the
-            // scale-aware point tolerance rather than exact equality.
-            for (const auto& poly : _obstacles)
-            {
-                const std::size_t m = poly.size();
-                for (std::size_t k = 0; k < m; ++k)
-                {
-                    const std::size_t k2 = (k + 1) % m;
-
-                    if (pointsNear(poly[k], seg.a) ||
-                        pointsNear(poly[k], seg.b) ||
-                        pointsNear(poly[k2], seg.a) ||
-                        pointsNear(poly[k2], seg.b))
-                        continue;
-
-                    if (segmentsIntersect(seg, { poly[k], poly[k2] }))
-                        return false;
-                }
-            }
-
-            // Same-polygon chord passes through interior?
-            const int pidA = _vertices[i].poly_id;
-            const int pidB = _vertices[j].poly_id;
-            if (pidA != -1 && pidA == pidB)
-            {
-                const Point2 mid = 0.5 * (seg.a + seg.b);
-                if (pointInPolygon(mid, _obstacles[pidA]) == PointLocation::Inside)
-                    return false;
-            }
-            return true;
-        }
-
-        /**
-         * @brief Connects a newly appended query vertex to visible earlier vertices.
-         *
-         * S is connected to obstacle vertices. G is then connected to obstacle
-         * vertices and S, which permits a direct S-G edge when unobstructed.
-         *
-         * @param q Index of the query vertex to connect.
-         */
-        void connectQueryVertex(std::size_t q)
-        {
-            for (std::size_t i = 0; i < q; ++i)
-                if (visible(i, q))
-                    addEdge(i, q);
-        }
-#endif
-
-
         /**
          * @brief Computes twice the signed area of the triangle (a, b, c).
          *
@@ -846,42 +536,6 @@ namespace astar
             return false;
         }
 
-        /**
-         * @brief Classifies a point with respect to a polygon (even-odd rule).
-         *
-         * Implements the crossing-number test. If the point lies on an edge
-         * within the scale-aware tolerance, it is reported as
-         * PointLocation::OnEdge; otherwise the usual inside/outside result is
-         * returned.
-         *
-         * @param p    Query point.
-         * @param poly Simple, non-self-intersecting polygon in CCW order.
-         * @return     PointLocation enum value.
-         *
-         * Complexity O(n) where n = poly.size().
-         */
-        static PointLocation pointInPolygon(const Point2& p,
-            const Polygon& poly)
-        {
-            bool inside = false;
-            const std::size_t n = poly.size();
-
-            for (std::size_t i = 0, j = n - 1; i < n; j = i++)
-            {
-                const Point2& a = poly[j];
-                const Point2& b = poly[i];
-
-                // Boundary test (collinear and within segment)
-                if (orientationSign(a, b, p) == 0 && onSegment(a, b, p))
-                    return PointLocation::OnEdge;
-
-                // Ray-casting toggle
-                const bool hit = ((a.y() > p.y()) != (b.y() > p.y())) &&
-                                 (p.x() < (b.x() - a.x()) * (p.y() - a.y()) / (b.y() - a.y()) + a.x());
-                if (hit) inside = !inside;
-            }
-            return inside ? PointLocation::Inside : PointLocation::Outside;
-        }
     };
 } // namespace astar
 

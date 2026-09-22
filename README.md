@@ -30,9 +30,8 @@ reusable environment model, occupancy grid, and initial A* planner. It supports:
 - direct OpenCV occupancy-grid visualization
 - efficient OpenCV polyline overlays for ordered grid paths
 
-The former visibility-graph construction, query-vertex injection, adjacency
-model, and Dijkstra search are disabled. The grid planner provides basic A*
-search with safe eight-connected movement by default.
+The former visibility-graph implementation has been removed. The active planner
+uses grid-based A* search with safe eight-connected movement by default.
 
 ## Assumptions and validation
 
@@ -41,7 +40,8 @@ search with safe eight-connected movement by default.
 - Repeated closing vertices, consecutive duplicates, and redundant collinear
   boundary vertices are removed.
 - Non-finite, self-intersecting, degenerate, and concave polygons are rejected.
-- Obstacle inputs with fewer than three vertices are ignored with a warning.
+- Obstacle inputs with fewer than three vertices are ignored without producing
+  library output.
 - Obstacles are clipped to the operation area when one is configured.
 - Empty, point-only, and line-only clipping results are discarded.
 - Direct `PolygonRasterizer` inputs are independently normalized and validated;

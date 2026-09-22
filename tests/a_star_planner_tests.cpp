@@ -13,6 +13,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -245,9 +246,15 @@ namespace
     void undersizedObstacleIsIgnored()
     {
         const Polygon line{ Point2(0.0, 0.0), Point2(1.0, 1.0) };
+        std::ostringstream capturedErrors;
+        std::streambuf* previousErrors = std::cerr.rdbuf(capturedErrors.rdbuf());
         const AStarPlanner planner({ line });
+        std::cerr.rdbuf(previousErrors);
+
         require(planner.originalObstacles().empty(), "undersized obstacle should not be retained");
         require(planner.obstacles().empty(), "undersized obstacle should not become effective geometry");
+        require(capturedErrors.str().empty(),
+            "ignoring an undersized obstacle should not write to standard error");
     }
 
     void operationAreaIsNormalized()
