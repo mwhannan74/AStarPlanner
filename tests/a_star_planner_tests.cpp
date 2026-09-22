@@ -459,7 +459,7 @@ namespace
             "polygon covering should preserve the bounding-box minimum as origin");
     }
 
-    void unconstrainedRasterizationMarksIntersectingCells()
+    void unconstrainedRasterizationPaintsCoveredCells()
     {
         const GridGeometry geometry(Point2(0.0, 0.0), 1.0, 4, 4);
         const Polygon obstacle{
@@ -469,13 +469,13 @@ namespace
 
         const OccupancyGrid grid = PolygonRasterizer::rasterize(geometry, { obstacle });
         require(grid.at({ 0, 0 }) == CellState::Occupied,
-            "obstacle crossing a cell corner should occupy the cell");
+            "OpenCV polygon coverage should occupy the lower-left cell");
         require(grid.at({ 1, 0 }) == CellState::Occupied,
-            "obstacle should occupy every intersected cell");
+            "OpenCV polygon coverage should occupy the lower-right cell");
         require(grid.at({ 0, 1 }) == CellState::Occupied,
-            "obstacle should occupy every intersected row");
+            "OpenCV polygon coverage should occupy the upper-left cell");
         require(grid.at({ 1, 1 }) == CellState::Occupied,
-            "obstacle should occupy all four intersected cells");
+            "OpenCV polygon coverage should occupy the upper-right cell");
         require(grid.isTraversable({ 2, 2 }),
             "cell outside the obstacle should remain traversable");
         require(!grid.isTraversable({ -1, 0 }),
@@ -507,7 +507,7 @@ namespace
             "occupied initialization should fill every OpenCV image pixel");
     }
 
-    void operationAreaRequiresWholeCellContainment()
+    void operationAreaPaintsCoveredCellsFree()
     {
         const GridGeometry geometry(Point2(0.0, 0.0), 1.0, 3, 3);
         const Polygon operationArea{
@@ -518,14 +518,12 @@ namespace
         const OccupancyGrid grid =
             PolygonRasterizer::rasterize(geometry, operationArea, {});
         require(grid.isTraversable({ 1, 1 }),
-            "cell wholly inside the operation area should be traversable");
-        require(grid.at({ 0, 0 }) == CellState::Occupied,
-            "cell crossing the operation-area boundary should remain occupied");
-        require(grid.at({ 2, 2 }) == CellState::Occupied,
-            "boundary rule should apply at every side of the operation area");
+            "operation-area interior should be painted free");
+        require(grid.isTraversable({ 0, 0 }) && grid.isTraversable({ 2, 2 }),
+            "OpenCV polygon coverage should paint covered boundary cells free");
     }
 
-    void obstacleBoundaryContactIsConservativelyOccupied()
+    void obstaclePaintingUsesOpenCvCoverage()
     {
         const GridGeometry geometry(Point2(0.0, 0.0), 1.0, 3, 2);
         const Polygon obstacle{
@@ -534,10 +532,10 @@ namespace
         };
 
         const OccupancyGrid grid = PolygonRasterizer::rasterize(geometry, { obstacle });
-        require(grid.at({ 0, 0 }) == CellState::Occupied,
-            "cell touched by an obstacle boundary should be occupied");
+        require(grid.isTraversable({ 0, 0 }),
+            "touching a cell boundary should not conservatively occupy both cells");
         require(grid.at({ 1, 0 }) == CellState::Occupied,
-            "cell containing obstacle area should be occupied");
+            "OpenCV polygon coverage should paint the obstacle cell occupied");
         require(grid.isTraversable({ 2, 0 }),
             "unrelated cell should remain free");
     }
@@ -572,9 +570,29 @@ namespace
         require(grid.at({ 1, 1 }) == CellState::Occupied,
             "obstacle should override operation-area free space");
         require(grid.isTraversable({ 0, 0 }),
-            "whole cells inside the operation area should remain free");
+            "operation-area interior cells should remain free");
         require(grid.image().rows == 3 && grid.image().cols == 3,
             "OpenCV image dimensions should match grid dimensions");
+    }
+
+    void rasterizationProducesBinaryOpenCvImage()
+    {
+        const GridGeometry geometry(Point2(0.0, 0.0), 0.5, 10, 10);
+        const Polygon operationArea{
+            Point2(0.5, 2.5), Point2(2.5, 0.5),
+            Point2(4.5, 2.5), Point2(2.5, 4.5)
+        };
+        const Polygon obstacle{
+            Point2(1.75, 1.75), Point2(3.25, 1.75),
+            Point2(3.25, 3.25), Point2(1.75, 3.25)
+        };
+        const OccupancyGrid grid = PolygonRasterizer::rasterize(
+            geometry, operationArea, { obstacle });
+
+        cv::Mat1b nonBinaryPixels;
+        cv::inRange(grid.image(), cv::Scalar(1), cv::Scalar(254), nonBinaryPixels);
+        require(cv::countNonZero(nonBinaryPixels) == 0,
+            "OpenCV polygon painting should retain binary occupancy values");
     }
 
     void operationAreaCanBuildAlignedMasterGrid()
@@ -590,10 +608,10 @@ namespace
             "master grid should align the operation area to the world lattice");
         require(master.width() == 4 && master.height() == 3,
             "master grid should cover the complete operation-area bounding box");
-        require(master.at({ 0, 0 }) == CellState::Occupied,
-            "partial boundary cells should remain occupied in the master grid");
+        require(master.isTraversable({ 0, 0 }),
+            "OpenCV coverage should free operation-area boundary cells");
         require(master.isTraversable({ 1, 1 }),
-            "whole cells inside the operation area should be free");
+            "operation-area interior cells should be free");
     }
 
     void validatedEnvironmentFeedsMasterRasterization()
@@ -997,7 +1015,7 @@ namespace
         };
         const AStarPlanner environment(operationArea, obstacles);
         const OccupancyGrid master = PolygonRasterizer::rasterize(
-            environment.operationArea(), environment.obstacles(), 0.25);
+            environment.operationArea(), environment.obstacles(), 1.0);
         const OccupancyGrid planningGrid = master.subgrid(
             WorldBounds{ Point2(4.0, 0.0), Point2(96.0, 60.0) });
         const auto start = planningGrid.geometry().worldToCell(Point2(5.0, 8.0));
@@ -1040,11 +1058,12 @@ namespace
         { "Aligned covering uses stable world lattice", alignedCoveringUsesStableWorldLattice },
         { "Polygon bounds size rectangular maps", polygonBoundsCanSizeRectangularMaps },
         { "Occupancy grid supports uniform initialization", occupancyGridSupportsUniformInitialization },
-        { "Rasterization marks intersecting cells", unconstrainedRasterizationMarksIntersectingCells },
-        { "Operation area requires whole-cell containment", operationAreaRequiresWholeCellContainment },
-        { "Obstacle boundary contact is occupied", obstacleBoundaryContactIsConservativelyOccupied },
+        { "Rasterization paints covered cells", unconstrainedRasterizationPaintsCoveredCells },
+        { "Operation area paints covered cells free", operationAreaPaintsCoveredCellsFree },
+        { "Obstacle painting uses OpenCV coverage", obstaclePaintingUsesOpenCvCoverage },
         { "Obstacle outside grid leaves map free", obstacleOutsideGridLeavesMapFree },
         { "Obstacle overrides operation area", obstacleOverridesOperationAreaFreeSpace },
+        { "Rasterization produces binary OpenCV image", rasterizationProducesBinaryOpenCvImage },
         { "Operation area builds aligned master grid", operationAreaCanBuildAlignedMasterGrid },
         { "Validated environment feeds master rasterization", validatedEnvironmentFeedsMasterRasterization },
         { "Subgrid preserves coordinates", subgridPreservesWorldAndMasterCoordinates },

@@ -66,7 +66,7 @@ int main(int argc, char* argv[])
     const Point2 start(5.0, 8.0);
     const Point2 goal(95.0, 52.0);
     AStarPlanner planner(operationArea, obstacles);
-    constexpr double gridResolution = 0.25;
+    constexpr double gridResolution = 1.0;
     const auto gridStartTime = Clock::now();
     const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
         planner.operationArea(),
@@ -126,7 +126,7 @@ int main(int argc, char* argv[])
     visualize(planner, start, goal, 1200, outputFile, worldPath);
 
     OccupancyGridRenderOptions gridView;
-    gridView.pixelsPerCell = 3;
+    gridView.pixelsPerCell = 8;
     for (const GridCell& cell : plan.path)
         gridView.markers.push_back({ cell, cv::Scalar(255, 120, 0), 2 });
     gridView.markers.push_back({ *startCell, cv::Scalar(0, 180, 0), 3 });

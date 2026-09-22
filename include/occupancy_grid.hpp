@@ -6,6 +6,7 @@
 #include "a_star_planner.hpp"
 
 #include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -601,18 +602,12 @@ namespace astar
             }
         }
 
-        void set(const GridCell& cell, CellState state)
-        {
-            const cv::Point pixel = _geometry.cellToImage(cell);
-            _occupancy(pixel.y, pixel.x) = static_cast<std::uint8_t>(state);
-        }
-
         GridGeometry _geometry;
         cv::Mat1b _occupancy;
         GridCell _masterCellOffset;
     };
 
-    /** Converts validated world-coordinate polygons into conservative grid cells. */
+    /** Paints validated world-coordinate polygons into an OpenCV occupancy grid. */
     class PolygonRasterizer
     {
     public:
@@ -622,7 +617,7 @@ namespace astar
         {
             OccupancyGrid grid(geometry, CellState::Free);
             for (const Polygon& obstacle : obstacles)
-                markIntersectingCells(grid, obstacle, CellState::Occupied);
+                paintPolygon(grid, obstacle, CellState::Occupied, "obstacle");
             return grid;
         }
 
@@ -631,22 +626,11 @@ namespace astar
             const Polygon& operationArea,
             const std::vector<Polygon>& obstacles)
         {
-            const std::vector<cv::Point2d> imageArea =
-                checkedImagePolygon(geometry, operationArea, "operation area");
-
             OccupancyGrid grid(geometry, CellState::Occupied);
-            for (int row = 0; row < geometry.height(); ++row)
-            {
-                for (int column = 0; column < geometry.width(); ++column)
-                {
-                    const cv::Point pixel = geometry.cellToImage({ column, row });
-                    if (cellIsContainedByPolygon(pixel.x, pixel.y, imageArea))
-                        grid.set({ column, row }, CellState::Free);
-                }
-            }
+            paintPolygon(grid, operationArea, CellState::Free, "operation area");
 
             for (const Polygon& obstacle : obstacles)
-                markIntersectingCells(grid, obstacle, CellState::Occupied);
+                paintPolygon(grid, obstacle, CellState::Occupied, "obstacle");
             return grid;
         }
 
@@ -689,173 +673,17 @@ namespace astar
             return imagePolygon;
         }
 
-        static double cross(
-            const cv::Point2d& a,
-            const cv::Point2d& b,
-            const cv::Point2d& c) noexcept
-        {
-            return (b.x - a.x) * (c.y - a.y) -
-                   (b.y - a.y) * (c.x - a.x);
-        }
+        inline static constexpr int SUBPIXEL_SHIFT = 8;
+        inline static constexpr double SUBPIXEL_SCALE = 1 << SUBPIXEL_SHIFT;
 
-        static double tolerance(
-            const cv::Point2d& a,
-            const cv::Point2d& b,
-            const cv::Point2d& c) noexcept
-        {
-            const double scale = std::max({
-                1.0,
-                std::abs(a.x), std::abs(a.y),
-                std::abs(b.x), std::abs(b.y),
-                std::abs(c.x), std::abs(c.y)
-            });
-            return 1e-12 * scale * scale;
-        }
-
-        static bool pointOnSegment(
-            const cv::Point2d& point,
-            const cv::Point2d& a,
-            const cv::Point2d& b) noexcept
-        {
-            if (std::abs(cross(a, b, point)) > tolerance(a, b, point))
-                return false;
-            const double coordinateTolerance = 1e-12 * std::max({
-                1.0,
-                std::abs(a.x), std::abs(a.y),
-                std::abs(b.x), std::abs(b.y),
-                std::abs(point.x), std::abs(point.y)
-            });
-            return point.x >= std::min(a.x, b.x) - coordinateTolerance &&
-                   point.x <= std::max(a.x, b.x) + coordinateTolerance &&
-                   point.y >= std::min(a.y, b.y) - coordinateTolerance &&
-                   point.y <= std::max(a.y, b.y) + coordinateTolerance;
-        }
-
-        static bool pointInOrOnPolygon(
-            const cv::Point2d& point,
-            const std::vector<cv::Point2d>& polygon) noexcept
-        {
-            bool inside = false;
-            for (std::size_t index = 0, previous = polygon.size() - 1;
-                 index < polygon.size(); previous = index++)
-            {
-                const cv::Point2d& a = polygon[previous];
-                const cv::Point2d& b = polygon[index];
-                if (pointOnSegment(point, a, b))
-                    return true;
-
-                const bool crossesScanline = (a.y > point.y) != (b.y > point.y);
-                if (crossesScanline)
-                {
-                    const double intersectionX =
-                        a.x + (point.y - a.y) * (b.x - a.x) / (b.y - a.y);
-                    if (intersectionX > point.x)
-                        inside = !inside;
-                }
-            }
-            return inside;
-        }
-
-        static int orientation(
-            const cv::Point2d& a,
-            const cv::Point2d& b,
-            const cv::Point2d& c) noexcept
-        {
-            const double value = cross(a, b, c);
-            const double allowed = tolerance(a, b, c);
-            return value > allowed ? 1 : (value < -allowed ? -1 : 0);
-        }
-
-        static bool segmentsIntersect(
-            const cv::Point2d& a,
-            const cv::Point2d& b,
-            const cv::Point2d& c,
-            const cv::Point2d& d) noexcept
-        {
-            const int abc = orientation(a, b, c);
-            const int abd = orientation(a, b, d);
-            const int cda = orientation(c, d, a);
-            const int cdb = orientation(c, d, b);
-
-            if (abc * abd < 0 && cda * cdb < 0)
-                return true;
-            return (abc == 0 && pointOnSegment(c, a, b)) ||
-                   (abd == 0 && pointOnSegment(d, a, b)) ||
-                   (cda == 0 && pointOnSegment(a, c, d)) ||
-                   (cdb == 0 && pointOnSegment(b, c, d));
-        }
-
-        static std::vector<cv::Point2d> cellCorners(int imageX, int imageY)
-        {
-            return {
-                { imageX - 0.5, imageY - 0.5 },
-                { imageX + 0.5, imageY - 0.5 },
-                { imageX + 0.5, imageY + 0.5 },
-                { imageX - 0.5, imageY + 0.5 }
-            };
-        }
-
-        static bool cellIsContainedByPolygon(
-            int imageX,
-            int imageY,
-            const std::vector<cv::Point2d>& polygon)
-        {
-            const auto corners = cellCorners(imageX, imageY);
-            return std::all_of(
-                corners.begin(), corners.end(),
-                [&polygon](const cv::Point2d& corner)
-                {
-                    return pointInOrOnPolygon(corner, polygon);
-                });
-        }
-
-        static bool cellIntersectsPolygon(
-            int imageX,
-            int imageY,
-            const std::vector<cv::Point2d>& polygon)
-        {
-            const auto corners = cellCorners(imageX, imageY);
-            for (const cv::Point2d& corner : corners)
-            {
-                if (pointInOrOnPolygon(corner, polygon))
-                    return true;
-            }
-
-            const double minimumX = imageX - 0.5;
-            const double maximumX = imageX + 0.5;
-            const double minimumY = imageY - 0.5;
-            const double maximumY = imageY + 0.5;
-            for (const cv::Point2d& vertex : polygon)
-            {
-                if (vertex.x >= minimumX && vertex.x <= maximumX &&
-                    vertex.y >= minimumY && vertex.y <= maximumY)
-                {
-                    return true;
-                }
-            }
-
-            for (std::size_t polygonIndex = 0; polygonIndex < polygon.size(); ++polygonIndex)
-            {
-                const cv::Point2d& a = polygon[polygonIndex];
-                const cv::Point2d& b = polygon[(polygonIndex + 1) % polygon.size()];
-                for (std::size_t cellIndex = 0; cellIndex < corners.size(); ++cellIndex)
-                {
-                    const cv::Point2d& c = corners[cellIndex];
-                    const cv::Point2d& d = corners[(cellIndex + 1) % corners.size()];
-                    if (segmentsIntersect(a, b, c, d))
-                        return true;
-                }
-            }
-            return false;
-        }
-
-        static void markIntersectingCells(
+        static void paintPolygon(
             OccupancyGrid& grid,
             const Polygon& polygon,
-            CellState state)
+            CellState state,
+            const char* description)
         {
             const std::vector<cv::Point2d> imagePolygon =
-                checkedImagePolygon(grid.geometry(), polygon, "obstacle");
+                checkedImagePolygon(grid.geometry(), polygon, description);
 
             double minimumX = imagePolygon.front().x;
             double maximumX = minimumX;
@@ -869,41 +697,38 @@ namespace astar
                 maximumY = std::max(maximumY, point.y);
             }
 
-            const int firstColumn = firstCandidateIndex(minimumX, grid.width());
-            const int lastColumn = lastCandidateIndex(maximumX, grid.width());
-            const int firstImageRow = firstCandidateIndex(minimumY, grid.height());
-            const int lastImageRow = lastCandidateIndex(maximumY, grid.height());
-
-            for (int imageRow = firstImageRow; imageRow <= lastImageRow; ++imageRow)
+            if (maximumX < -0.5 || minimumX > grid.width() - 0.5 ||
+                maximumY < -0.5 || minimumY > grid.height() - 0.5)
             {
-                for (int column = firstColumn; column <= lastColumn; ++column)
-                {
-                    if (!cellIntersectsPolygon(column, imageRow, imagePolygon))
-                        continue;
-                    const GridCell cell{ column, grid.height() - 1 - imageRow };
-                    grid.set(cell, state);
-                }
+                return;
             }
-        }
 
-        static int firstCandidateIndex(double minimum, int dimension) noexcept
-        {
-            const double candidate = std::ceil(minimum - 0.5);
-            if (candidate <= 0.0)
-                return 0;
-            if (candidate >= static_cast<double>(dimension))
-                return dimension;
-            return static_cast<int>(candidate);
-        }
+            std::vector<cv::Point> fixedPointPolygon;
+            fixedPointPolygon.reserve(imagePolygon.size());
+            for (const cv::Point2d& point : imagePolygon)
+            {
+                const double scaledX = std::round(point.x * SUBPIXEL_SCALE);
+                const double scaledY = std::round(point.y * SUBPIXEL_SCALE);
+                if (scaledX < static_cast<double>(std::numeric_limits<int>::min()) ||
+                    scaledX > static_cast<double>(std::numeric_limits<int>::max()) ||
+                    scaledY < static_cast<double>(std::numeric_limits<int>::min()) ||
+                    scaledY > static_cast<double>(std::numeric_limits<int>::max()))
+                {
+                    throw std::invalid_argument(
+                        std::string("PolygonRasterizer: ") + description +
+                        " is outside OpenCV's fixed-point drawing range");
+                }
+                fixedPointPolygon.emplace_back(
+                    static_cast<int>(scaledX),
+                    static_cast<int>(scaledY));
+            }
 
-        static int lastCandidateIndex(double maximum, int dimension) noexcept
-        {
-            const double candidate = std::floor(maximum + 0.5);
-            if (candidate < 0.0)
-                return -1;
-            if (candidate >= static_cast<double>(dimension - 1))
-                return dimension - 1;
-            return static_cast<int>(candidate);
+            cv::fillConvexPoly(
+                grid._occupancy,
+                fixedPointPolygon,
+                cv::Scalar(static_cast<std::uint8_t>(state)),
+                cv::LINE_8,
+                SUBPIXEL_SHIFT);
         }
     };
 }

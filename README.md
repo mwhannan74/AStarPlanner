@@ -19,8 +19,7 @@ reusable environment model, occupancy grid, and initial A* planner. It supports:
 - world, Cartesian-grid, and OpenCV-image coordinate conversion
 - explicit cell-sized, world-bounds-sized, and polygon-sized grids
 - optional alignment to a stable world-coordinate lattice
-- conservative obstacle rasterization
-- whole-cell containment within the operation area
+- OpenCV-accelerated operation-area and obstacle rasterization
 - master maps with shared or independently copied planning subgrids
 - eight-connected A* search with optional four-connected movement
 - unit orthogonal and `sqrt(2)` diagonal costs with matching heuristics
@@ -110,8 +109,8 @@ planning ROI and displays the obstacle-avoiding A* result.
 
 The first demo builds an explicit world-aligned rectangular grid around a
 randomized field of polygon obstacles. The second builds a master grid directly
-from the operation area's bounding box, frees whole cells inside that area, and
-then overlays the effective obstacles. Both demos crop a planning ROI, call the
+from the operation area's bounding box, paints that area free, and then paints
+the effective obstacles occupied. Both demos crop a planning ROI, call the
 A* planner, report grid-rasterization and planning time, and display its path in
 both the occupancy-grid view and the world-coordinate MatPlotOpenCV figure. Pass
 an optional image filename as the first argument to save the world-coordinate

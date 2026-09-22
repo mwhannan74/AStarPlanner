@@ -15,7 +15,7 @@ if(ASTAR_PLANNER_OPENCV_DIR AND NOT OpenCV_DIR)
     set(OpenCV_DIR "${ASTAR_PLANNER_OPENCV_DIR}")
 endif()
 
-find_package(OpenCV 4.5 REQUIRED COMPONENTS core)
+find_package(OpenCV 4.5 REQUIRED COMPONENTS core imgproc)
 
 # ---------- Library target ---------------------------------------------------
 add_library(astar_planner INTERFACE)
@@ -30,6 +30,7 @@ target_include_directories(astar_planner
 target_link_libraries(astar_planner
     INTERFACE
         opencv_core
+        opencv_imgproc
 )
 
 # ---------- Demo executable --------------------------------------------------
