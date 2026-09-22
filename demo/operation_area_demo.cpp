@@ -73,6 +73,8 @@ int main(int argc, char* argv[])
         planner.obstacles(),
         gridResolution);
     const auto gridElapsed = Clock::now() - gridStartTime;
+    // This caller-selected ROI retains the operation area's full vertical span,
+    // including the available routes around the alternating obstacle walls.
     const WorldBounds planningBounds{
         Point2(4.0, 0.0),
         Point2(96.0, 60.0)
@@ -88,7 +90,7 @@ int main(int argc, char* argv[])
               << masterGrid.width() << " x " << masterGrid.height()
               << " cells at " << masterGrid.geometry().resolution()
               << " world units per cell\n";
-    std::cout << "Planning ROI: "
+    std::cout << "Planning ROI (caller-selected): "
               << planningGrid.width() << " x " << planningGrid.height()
               << " cells, master offset ("
               << planningGrid.masterCellOffset().column << ", "

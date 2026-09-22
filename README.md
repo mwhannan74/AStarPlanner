@@ -115,11 +115,19 @@ planning ROI and displays the obstacle-avoiding A* result.
 The first demo builds an explicit world-aligned rectangular grid around a
 randomized field of polygon obstacles. The second builds a master grid directly
 from the operation area's bounding box, paints that area free, and then paints
-the effective obstacles occupied. Both demos crop a planning ROI, call the
-A* planner, report grid-rasterization and planning time, and display its path in
-both the occupancy-grid view and the world-coordinate MatPlotOpenCV figure. Pass
-an optional image filename as the first argument to save the world-coordinate
-figure before its windows are displayed.
+the effective obstacles occupied. The first demo plans on its complete master
+grid. The second demonstrates a caller-selected ROI that deliberately retains
+the space needed to route around its obstacle walls. Both demos report
+grid-rasterization and planning time and display the path in the occupancy-grid
+view and the world-coordinate MatPlotOpenCV figure. Pass an optional image
+filename as the first argument to save the world-coordinate figure before its
+windows are displayed.
+
+A planning ROI restricts the search domain; it is not only a storage or display
+crop. A path that exists in the master grid may require cells outside the ROI,
+so `NoPath` means no path exists inside the supplied planning grid. Use the full
+master grid when no safe application-specific planning window is known. An
+automatic expanding-ROI retry policy is not currently provided.
 
 <p align="center">
   <img src="images/a_star_planner_demo.png"

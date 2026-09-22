@@ -88,16 +88,7 @@ int main(int argc, char* argv[])
     const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
         gridGeometry, planner.obstacles());
     const auto gridElapsed = Clock::now() - gridStartTime;
-    const double planningPadding = 0.5 * gridResolution;
-    const OccupancyGrid planningGrid = masterGrid.subgrid(
-        WorldBounds{
-            Point2(
-                std::min(start.x(), goal.x()) - planningPadding,
-                std::min(start.y(), goal.y()) - planningPadding),
-            Point2(
-                std::max(start.x(), goal.x()) + planningPadding,
-                std::max(start.y(), goal.y()) + planningPadding)
-        });
+    const OccupancyGrid& planningGrid = masterGrid;
 
     std::cout << "Environment has " << planner.obstacles().size()
               << " effective obstacles\n";
@@ -105,11 +96,9 @@ int main(int argc, char* argv[])
               << masterGrid.width() << " x " << masterGrid.height()
               << " cells at " << masterGrid.geometry().resolution()
               << " world units per cell\n";
-    std::cout << "Planning ROI: "
+    std::cout << "Planning grid (full master map): "
               << planningGrid.width() << " x " << planningGrid.height()
-              << " cells, master offset ("
-              << planningGrid.masterCellOffset().column << ", "
-              << planningGrid.masterCellOffset().row << ")\n";
+              << " cells\n";
     std::cout << std::fixed << std::setprecision(3)
               << "Grid rasterization: "
               << std::chrono::duration<double, std::milli>(gridElapsed).count()
@@ -120,7 +109,7 @@ int main(int argc, char* argv[])
     const auto goalCell = planningGrid.geometry().worldToCell(goal);
     if (!startCell || !goalCell)
     {
-        std::cerr << "Start or goal is outside the planning ROI\n";
+        std::cerr << "Start or goal is outside the planning grid\n";
         return 1;
     }
 
@@ -149,7 +138,7 @@ int main(int argc, char* argv[])
 
     std::cout << "A* path: "
               << plan.path.size() << " cells\n";
-    showOccupancyGrid(planningGrid, gridView, "AStarPlanner Planning ROI");
+    showOccupancyGrid(planningGrid, gridView, "AStarPlanner Master Grid");
 
     cv::waitKey(0);
     return 0;

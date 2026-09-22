@@ -965,6 +965,29 @@ namespace
             "planner result endpoints should map back to their world positions");
     }
 
+    void planningRoiCanExcludeAValidDetour()
+    {
+        const OccupancyGrid master = gridWithOccupiedCells(
+            7, 5, { { 3, 1 }, { 3, 2 }, { 3, 3 } });
+        const OccupancyGrid minimalTerminalRoi = master.subgrid(
+            WorldBounds{ Point2(1.0, 2.0), Point2(6.0, 3.0) });
+        const AStarGridPlanner planner;
+        AStarOptions options;
+        options.connectivity = GridConnectivity::FourConnected;
+
+        const auto croppedResult = planner.plan(
+            minimalTerminalRoi, { 0, 0 }, { 4, 0 }, options);
+        require(croppedResult.status == GridPlanStatus::NoPath,
+            "minimal terminal ROI should exclude the route around the wall");
+
+        const auto masterResult = planner.plan(
+            master, { 1, 2 }, { 5, 2 }, options);
+        require(masterResult.succeeded(),
+            "full master grid should retain the valid detour around the wall");
+        requireValidFourConnectedPath(
+            master, masterResult.path, { 1, 2 }, { 5, 2 });
+    }
+
     void gridPathConvertsRoiCellsToWorldCenters()
     {
         const OccupancyGrid master(
@@ -1106,6 +1129,7 @@ namespace
         { "A* controls diagonal corner cutting", aStarControlsDiagonalCornerCutting },
         { "A* reports when no path exists", aStarReportsWhenNoPathExists },
         { "A* planning pipeline uses ROI coordinates", aStarPlanningPipelineUsesRoiLocalCoordinates },
+        { "Planning ROI can exclude valid detour", planningRoiCanExcludeAValidDetour },
         { "Grid path converts ROI cells to world centers", gridPathConvertsRoiCellsToWorldCenters },
         { "Operation-area demo environment finds path", operationAreaDemoEnvironmentFindsPath }
     };
