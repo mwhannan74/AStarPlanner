@@ -64,6 +64,18 @@ namespace astar
         }
     };
 
+    /** Converts an ordered grid path to the world positions of its cell centers. */
+    inline std::vector<Point2> gridPathToWorld(
+        const OccupancyGrid& grid,
+        const std::vector<GridCell>& path)
+    {
+        std::vector<Point2> worldPath;
+        worldPath.reserve(path.size());
+        for (const GridCell& cell : path)
+            worldPath.push_back(grid.geometry().cellCenterToWorld(cell));
+        return worldPath;
+    }
+
     /**
      * Planning entry point for an occupancy grid.
      *

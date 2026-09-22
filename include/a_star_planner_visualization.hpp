@@ -13,26 +13,29 @@
 #include "a_star_planner.hpp"
 #include "figure.h"
 
+#include <utility>
+
 namespace astar
 {
     /**
      * @brief Visualize the retained polygon environment and terminal points.
      *
      * Draws the operation-area boundary when present, followed by obstacle
-     * polygons and the start/goal markers. Path layers will be added when the
-     * grid-based planner is implemented.
+     * polygons, an optional world-coordinate path, and the start/goal markers.
      *
      * @param planner   Environment to render.
      * @param start     Start query point.
      * @param goal      Goal query point.
      * @param pixelSize Figure width/height in pixels.
      * @param outputFile Optional image filename written before showing the window.
+     * @param path       Optional path in world coordinates.
      */
     inline void visualize(const AStarPlanner& planner,
         const Point2& start,
         const Point2& goal,
         int pixelSize = 1200,
-        const std::string& outputFile = {})
+        const std::string& outputFile = {},
+        const std::vector<Point2>& path = {})
     {
         using namespace mpocv;
 
@@ -107,6 +110,29 @@ namespace astar
         // operation area, then highlight positive-area clipped results.
         drawPolygons(planner.originalObstacles(), obstacleStyle, "Original obstacle");
         drawPolygons(planner.clippedObstacles(), clippedObstacleStyle, "Clipped obstacle");
+
+        if (!path.empty())
+        {
+            std::vector<double> pathX;
+            std::vector<double> pathY;
+            pathX.reserve(path.size() + 2);
+            pathY.reserve(path.size() + 2);
+            pathX.push_back(start.x());
+            pathY.push_back(start.y());
+            for (const Point2& point : path)
+            {
+                pathX.push_back(point.x());
+                pathY.push_back(point.y());
+            }
+            pathX.push_back(goal.x());
+            pathY.push_back(goal.y());
+            fig.plot(
+                std::move(pathX),
+                std::move(pathY),
+                Color(255, 140, 0),
+                2.5f,
+                "Planned path");
+        }
 
         // Draw query terminals last so they stay visible on top.
         fig.scatter({ start.x() }, { start.y() }, Color::Green(), 6.0f, "Start");

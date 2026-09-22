@@ -8,6 +8,8 @@
 #include "occupancy_grid_visualization.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <random>
@@ -18,6 +20,8 @@ using namespace astar;
 
 int main(int argc, char* argv[])
 {
+    using Clock = std::chrono::steady_clock;
+
     const int rows = 5;
     const int columns = 5;
     const double obstacleSize = 5.0;
@@ -80,8 +84,10 @@ int main(int argc, char* argv[])
     };
     const GridGeometry gridGeometry = GridGeometry::alignedCovering(
         mapBounds, gridResolution);
+    const auto gridStartTime = Clock::now();
     const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
         gridGeometry, planner.obstacles());
+    const auto gridElapsed = Clock::now() - gridStartTime;
     const double planningPadding = 0.5 * gridResolution;
     const OccupancyGrid planningGrid = masterGrid.subgrid(
         WorldBounds{
@@ -104,8 +110,11 @@ int main(int argc, char* argv[])
               << " cells, master offset ("
               << planningGrid.masterCellOffset().column << ", "
               << planningGrid.masterCellOffset().row << ")\n";
+    std::cout << std::fixed << std::setprecision(3)
+              << "Grid rasterization: "
+              << std::chrono::duration<double, std::milli>(gridElapsed).count()
+              << " ms\n";
     const std::string outputFile = argc > 1 ? argv[1] : "";
-    visualize(planner, start, goal, 1200, outputFile);
 
     const auto startCell = planningGrid.geometry().worldToCell(start);
     const auto goalCell = planningGrid.geometry().worldToCell(goal);
@@ -116,14 +125,21 @@ int main(int argc, char* argv[])
     }
 
     const AStarGridPlanner gridPlanner;
+    const auto planningStartTime = Clock::now();
     const GridPlanResult plan = gridPlanner.plan(
         planningGrid, *startCell, *goalCell);
+    const auto planningElapsed = Clock::now() - planningStartTime;
+    std::cout << "A* planning: "
+              << std::chrono::duration<double, std::milli>(planningElapsed).count()
+              << " ms\n";
     if (!plan.succeeded())
     {
         std::cerr << "A* grid planner failed: "
                   << gridPlanStatusName(plan.status) << '\n';
         return 1;
     }
+    const std::vector<Point2> worldPath = gridPathToWorld(planningGrid, plan.path);
+    visualize(planner, start, goal, 1200, outputFile, worldPath);
 
     OccupancyGridRenderOptions gridView;
     gridView.pixelsPerCell = 8;

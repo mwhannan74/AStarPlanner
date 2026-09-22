@@ -25,6 +25,7 @@ reusable environment model, occupancy grid, and initial A* planner. It supports:
 - eight-connected A* search with optional four-connected movement
 - unit orthogonal and `sqrt(2)` diagonal costs with matching heuristics
 - optional diagonal corner cutting, disabled by default
+- conversion of ROI-local grid paths to world-coordinate cell centers
 - explicit planning outcomes for invalid terminals and unreachable goals
 - optional environment visualization through MatPlotOpenCV
 - direct OpenCV occupancy-grid visualization
@@ -111,9 +112,10 @@ The first demo builds an explicit world-aligned rectangular grid around a
 randomized field of polygon obstacles. The second builds a master grid directly
 from the operation area's bounding box, frees whole cells inside that area, and
 then overlays the effective obstacles. Both demos crop a planning ROI, call the
-A* planner, and display its path with start and goal markers. Pass an optional
-image filename as the first argument to save the
-polygon figure before its windows are displayed.
+A* planner, report grid-rasterization and planning time, and display its path in
+both the occupancy-grid view and the world-coordinate MatPlotOpenCV figure. Pass
+an optional image filename as the first argument to save the world-coordinate
+figure before its windows are displayed.
 
 <p align="center">
   <img src="images/a_star_planner_demo.png"

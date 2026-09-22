@@ -35,6 +35,7 @@ namespace
     using astar::PolygonRasterizer;
     using astar::SubgridStorage;
     using astar::WorldBounds;
+    using astar::gridPathToWorld;
     using astar::rasterizeGridLine;
 
     constexpr double TEST_EPSILON = 1e-9;
@@ -921,6 +922,35 @@ namespace
             "planner result endpoints should map back to their world positions");
     }
 
+    void gridPathConvertsRoiCellsToWorldCenters()
+    {
+        const OccupancyGrid master(
+            GridGeometry(Point2(10.0, -4.0), 0.5, 8, 6),
+            CellState::Free);
+        const OccupancyGrid planningGrid = master.subgrid(
+            GridRegion{ { 2, 1 }, 4, 3 });
+        const std::vector<GridCell> gridPath{
+            { 0, 0 }, { 1, 1 }, { 3, 2 }
+        };
+
+        const std::vector<Point2> worldPath = gridPathToWorld(
+            planningGrid, gridPath);
+        require(worldPath.size() == gridPath.size(),
+            "world path should preserve the number and order of grid cells");
+        require(pointsNear(worldPath[0], Point2(11.25, -3.25)) &&
+                pointsNear(worldPath[1], Point2(11.75, -2.75)) &&
+                pointsNear(worldPath[2], Point2(12.75, -2.25)),
+            "ROI-local path cells should convert to their world-space centers");
+        require(gridPathToWorld(planningGrid, {}).empty(),
+            "an empty grid path should produce an empty world path");
+        requireThrows<std::out_of_range>(
+            [&planningGrid]
+            {
+                gridPathToWorld(planningGrid, { { 4, 0 } });
+            },
+            "path conversion should reject cells outside the planning grid");
+    }
+
     void operationAreaDemoEnvironmentFindsPath()
     {
         const Polygon operationArea{
@@ -1033,6 +1063,7 @@ namespace
         { "A* controls diagonal corner cutting", aStarControlsDiagonalCornerCutting },
         { "A* reports when no path exists", aStarReportsWhenNoPathExists },
         { "A* planning pipeline uses ROI coordinates", aStarPlanningPipelineUsesRoiLocalCoordinates },
+        { "Grid path converts ROI cells to world centers", gridPathConvertsRoiCellsToWorldCenters },
         { "Operation-area demo environment finds path", operationAreaDemoEnvironmentFindsPath }
     };
 }
