@@ -42,13 +42,15 @@ namespace astar
 
     enum class GridConnectivity
     {
-        FourConnected
+        FourConnected,
+        EightConnected
     };
 
     /** Search settings. Additional movement models can be added without changing plan(). */
     struct AStarOptions
     {
-        GridConnectivity connectivity = GridConnectivity::FourConnected;
+        GridConnectivity connectivity = GridConnectivity::EightConnected;
+        bool preventDiagonalCornerCutting = true;
     };
 
     struct GridPlanResult
@@ -65,8 +67,9 @@ namespace astar
     /**
      * Planning entry point for an occupancy grid.
      *
-     * The initial implementation uses four-connected, unit-cost movement and a
-     * Manhattan-distance heuristic. Returned paths include both terminal cells.
+     * Eight-connected movement is the default. Orthogonal moves cost 1,
+     * diagonal moves cost sqrt(2), and the heuristic is selected to match the
+     * configured connectivity. Returned paths include both terminal cells.
      */
     class AStarGridPlanner
     {
@@ -94,13 +97,13 @@ namespace astar
             const std::size_t cellCount =
                 static_cast<std::size_t>(grid.width()) *
                 static_cast<std::size_t>(grid.height());
-            const std::size_t unreachable = std::numeric_limits<std::size_t>::max();
-            std::vector<std::size_t> costs(cellCount, unreachable);
+            const double unreachable = std::numeric_limits<double>::infinity();
+            std::vector<double> costs(cellCount, unreachable);
             std::vector<std::size_t> parents(cellCount, unreachable);
             std::priority_queue<OpenNode, std::vector<OpenNode>, LowerCostFirst> open;
 
             costs[startIndex] = 0;
-            open.push({ manhattanDistance(start, goal), 0, 0, startIndex });
+            open.push({ heuristic(start, goal, options), 0.0, 0, startIndex });
 
             while (!open.empty())
             {
@@ -117,20 +120,35 @@ namespace astar
                 }
 
                 const GridCell currentCell = indexCell(grid, current.index);
-                for (const GridCell& neighbor : neighbors(currentCell, options))
+                for (const NeighborOffset& offset : NEIGHBOR_OFFSETS)
                 {
-                    if (!grid.isTraversable(neighbor))
+                    const bool diagonal = offset.column != 0 && offset.row != 0;
+                    if (diagonal && options.connectivity != GridConnectivity::EightConnected)
                         continue;
 
+                    const GridCell neighbor{
+                        currentCell.column + offset.column,
+                        currentCell.row + offset.row
+                    };
+                    if (!grid.isTraversable(neighbor))
+                        continue;
+                    if (diagonal && options.preventDiagonalCornerCutting &&
+                        (!grid.isTraversable({ neighbor.column, currentCell.row }) ||
+                         !grid.isTraversable({ currentCell.column, neighbor.row })))
+                    {
+                        continue;
+                    }
+
                     const std::size_t neighborIndex = cellIndex(grid, neighbor);
-                    const std::size_t candidateCost = current.costFromStart + 1;
+                    const double candidateCost =
+                        current.costFromStart + offset.movementCost;
                     if (candidateCost >= costs[neighborIndex])
                         continue;
 
                     costs[neighborIndex] = candidateCost;
                     parents[neighborIndex] = current.index;
                     open.push({
-                        candidateCost + manhattanDistance(neighbor, goal),
+                        candidateCost + heuristic(neighbor, goal, options),
                         candidateCost,
                         lineDeviation(start, goal, neighbor),
                         neighborIndex
@@ -144,11 +162,30 @@ namespace astar
     private:
         struct OpenNode
         {
-            std::size_t estimatedTotalCost;
-            std::size_t costFromStart;
+            double estimatedTotalCost;
+            double costFromStart;
             std::uint64_t lineDeviation;
             std::size_t index;
         };
+
+        struct NeighborOffset
+        {
+            int column;
+            int row;
+            double movementCost;
+        };
+
+        inline static constexpr double DIAGONAL_COST = 1.4142135623730950488;
+        inline static constexpr std::array<NeighborOffset, 8> NEIGHBOR_OFFSETS{ {
+            { 1, 0, 1.0 },
+            { 1, 1, DIAGONAL_COST },
+            { 0, 1, 1.0 },
+            { -1, 1, DIAGONAL_COST },
+            { -1, 0, 1.0 },
+            { -1, -1, DIAGONAL_COST },
+            { 0, -1, 1.0 },
+            { 1, -1, DIAGONAL_COST }
+        } };
 
         struct LowerCostFirst
         {
@@ -184,15 +221,25 @@ namespace astar
             };
         }
 
-        static std::size_t manhattanDistance(
+        static double heuristic(
             const GridCell& first,
-            const GridCell& second) noexcept
+            const GridCell& second,
+            const AStarOptions& options) noexcept
         {
             const auto columnDistance = static_cast<std::size_t>(
                 std::abs(first.column - second.column));
             const auto rowDistance = static_cast<std::size_t>(
                 std::abs(first.row - second.row));
-            return columnDistance + rowDistance;
+            if (options.connectivity == GridConnectivity::EightConnected)
+            {
+                const std::size_t diagonalSteps =
+                    std::min(columnDistance, rowDistance);
+                const std::size_t orthogonalSteps =
+                    std::max(columnDistance, rowDistance) - diagonalSteps;
+                return static_cast<double>(orthogonalSteps) +
+                    DIAGONAL_COST * static_cast<double>(diagonalSteps);
+            }
+            return static_cast<double>(columnDistance + rowDistance);
         }
 
         static std::uint64_t lineDeviation(
@@ -212,24 +259,6 @@ namespace astar
                 goalColumn * cellRow - goalRow * cellColumn;
             return static_cast<std::uint64_t>(
                 crossProduct < 0 ? -crossProduct : crossProduct);
-        }
-
-        static std::array<GridCell, 4> neighbors(
-            const GridCell& cell,
-            const AStarOptions& options) noexcept
-        {
-            switch (options.connectivity)
-            {
-            case GridConnectivity::FourConnected:
-                return { {
-                    { cell.column + 1, cell.row },
-                    { cell.column, cell.row + 1 },
-                    { cell.column - 1, cell.row },
-                    { cell.column, cell.row - 1 }
-                } };
-            }
-
-            return { { cell, cell, cell, cell } };
         }
 
         static std::vector<GridCell> reconstructPath(

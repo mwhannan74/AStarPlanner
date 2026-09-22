@@ -22,14 +22,16 @@ reusable environment model, occupancy grid, and initial A* planner. It supports:
 - conservative obstacle rasterization
 - whole-cell containment within the operation area
 - master maps with shared or independently copied planning subgrids
-- four-connected, unit-cost A* search with a Manhattan heuristic
+- eight-connected A* search with optional four-connected movement
+- unit orthogonal and `sqrt(2)` diagonal costs with matching heuristics
+- optional diagonal corner cutting, disabled by default
 - explicit planning outcomes for invalid terminals and unreachable goals
 - optional environment visualization through MatPlotOpenCV
 - direct OpenCV occupancy-grid visualization
 
 The former visibility-graph construction, query-vertex injection, adjacency
 model, and Dijkstra search are disabled. The grid planner provides basic A*
-search with four-connected, unit-cost movement and a Manhattan heuristic.
+search with safe eight-connected movement by default.
 
 ## Assumptions and validation
 

@@ -106,6 +106,37 @@ namespace
         }
     }
 
+    void requireValidEightConnectedPath(
+        const OccupancyGrid& grid,
+        const std::vector<GridCell>& path,
+        const GridCell& start,
+        const GridCell& goal)
+    {
+        require(!path.empty(), "successful path should not be empty");
+        require(path.front() == start && path.back() == goal,
+            "path should include the requested start and goal cells");
+        for (std::size_t index = 0; index < path.size(); ++index)
+        {
+            require(grid.isTraversable(path[index]),
+                "every returned path cell should be traversable");
+            if (index == 0)
+                continue;
+
+            const GridCell& previous = path[index - 1];
+            const int columnStep = std::abs(path[index].column - previous.column);
+            const int rowStep = std::abs(path[index].row - previous.row);
+            require(std::max(columnStep, rowStep) == 1,
+                "consecutive path cells should be eight-connected neighbors");
+            if (columnStep == 1 && rowStep == 1)
+            {
+                require(
+                    grid.isTraversable({ path[index].column, previous.row }) &&
+                    grid.isTraversable({ previous.column, path[index].row }),
+                    "diagonal path steps should not cut occupied corners");
+            }
+        }
+    }
+
     double signedAreaTwice(const Polygon& polygon)
     {
         const Point2& origin = polygon.front();
@@ -789,15 +820,17 @@ namespace
         const OccupancyGrid grid = gridWithOccupiedCells(
             5, 5, { { 2, 0 }, { 2, 1 }, { 2, 2 }, { 2, 3 } });
         const AStarGridPlanner planner;
+        AStarOptions options;
+        options.connectivity = GridConnectivity::FourConnected;
 
-        const auto result = planner.plan(grid, { 0, 2 }, { 4, 2 });
+        const auto result = planner.plan(grid, { 0, 2 }, { 4, 2 }, options);
         require(result.succeeded(), "A* should route through the wall opening");
         requireValidFourConnectedPath(grid, result.path, { 0, 2 }, { 4, 2 });
         require(result.path.size() == 9,
             "detour should be the shortest route through the wall opening");
     }
 
-    void aStarPrefersShortestPathNearDirectLine()
+    void aStarUsesEightConnectedDiagonalPathByDefault()
     {
         const OccupancyGrid grid(
             GridGeometry(Point2(0.0, 0.0), 1.0, 11, 11),
@@ -806,14 +839,34 @@ namespace
 
         const auto result = planner.plan(grid, { 0, 0 }, { 10, 10 });
         require(result.succeeded(), "A* should cross an empty square grid");
-        requireValidFourConnectedPath(grid, result.path, { 0, 0 }, { 10, 10 });
-        require(result.path.size() == 21,
-            "line preference must not make the shortest path longer");
+        requireValidEightConnectedPath(grid, result.path, { 0, 0 }, { 10, 10 });
+        require(result.path.size() == 11,
+            "eight-connected planning should use the direct diagonal path");
         for (const GridCell& cell : result.path)
         {
-            require(std::abs(cell.column - cell.row) <= 1,
-                "equal-cost path selection should stay near the direct line");
+            require(cell.column == cell.row,
+                "empty-grid diagonal path should stay on the direct line");
         }
+    }
+
+    void aStarControlsDiagonalCornerCutting()
+    {
+        const OccupancyGrid grid = gridWithOccupiedCells(
+            2, 2, { { 1, 0 }, { 0, 1 } });
+        const AStarGridPlanner planner;
+
+        const auto protectedResult = planner.plan(grid, { 0, 0 }, { 1, 1 });
+        require(protectedResult.status == GridPlanStatus::NoPath,
+            "default eight-connected planning should not cut occupied corners");
+
+        AStarOptions options;
+        options.preventDiagonalCornerCutting = false;
+        const auto permissiveResult = planner.plan(
+            grid, { 0, 0 }, { 1, 1 }, options);
+        require(permissiveResult.succeeded() &&
+                permissiveResult.path ==
+                    std::vector<GridCell>{ { 0, 0 }, { 1, 1 } },
+            "corner cutting should be available as an explicit option");
     }
 
     void aStarReportsWhenNoPathExists()
@@ -855,7 +908,7 @@ namespace
         require(result.succeeded() && result.path.front() == *start &&
                 result.path.back() == *goal,
             "planner result should retain the ROI-local start and goal cells");
-        requireValidFourConnectedPath(planningGrid, result.path, *start, *goal);
+        requireValidEightConnectedPath(planningGrid, result.path, *start, *goal);
         require(planningGrid.localToMaster(result.path.front()) == GridCell{ 2, 1 } &&
                 planningGrid.localToMaster(result.path.back()) == GridCell{ 7, 8 },
             "ROI-local result cells should map back to the correct master cells");
@@ -927,7 +980,7 @@ namespace
         require(result.succeeded(),
             std::string("operation-area demo should find a path: ") +
                 astar::gridPlanStatusName(result.status));
-        requireValidFourConnectedPath(planningGrid, result.path, *start, *goal);
+        requireValidEightConnectedPath(planningGrid, result.path, *start, *goal);
     }
 
     struct TestCase
@@ -976,7 +1029,8 @@ namespace
         { "A* handles coincident terminals", aStarHandlesCoincidentTerminals },
         { "A* validates terminals", aStarValidatesTerminals },
         { "A* routes around obstacle", aStarRoutesAroundObstacle },
-        { "A* prefers shortest path near direct line", aStarPrefersShortestPathNearDirectLine },
+        { "A* uses eight-connected diagonal path by default", aStarUsesEightConnectedDiagonalPathByDefault },
+        { "A* controls diagonal corner cutting", aStarControlsDiagonalCornerCutting },
         { "A* reports when no path exists", aStarReportsWhenNoPathExists },
         { "A* planning pipeline uses ROI coordinates", aStarPlanningPipelineUsesRoiLocalCoordinates },
         { "Operation-area demo environment finds path", operationAreaDemoEnvironmentFindsPath }
