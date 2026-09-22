@@ -147,13 +147,17 @@ int main(int argc, char* argv[])
     const auto planningElapsed = Clock::now() - planningStartTime;
     std::cout << "A* planning: "
               << std::chrono::duration<double, std::milli>(planningElapsed).count()
-              << " ms\n";
+              << " ms\n"
+              << "Expanded nodes: " << plan.diagnostics.expandedNodes << '\n'
+              << "Generated nodes: " << plan.diagnostics.generatedNodes << '\n'
+              << "Peak open-set size: " << plan.diagnostics.peakOpenSetSize << '\n';
     if (!plan.succeeded())
     {
         std::cerr << "A* grid planner failed: "
                   << gridPlanStatusName(plan.status) << '\n';
         return 1;
     }
+    std::cout << "Path cost: " << plan.diagnostics.pathCost << '\n';
     // 8. Convert the ROI-local cell path to world cell centers and render it.
     const std::vector<Point2> worldPath = gridPathToWorld(planningGrid, plan.path);
     visualize(environment, start, goal, 1200, outputFile, worldPath);

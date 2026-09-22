@@ -25,6 +25,7 @@ reusable environment model, occupancy grid, and working A* planner. It supports:
 - eight-connected A* search with optional four-connected movement
 - unit orthogonal and `sqrt(2)` diagonal costs with matching heuristics
 - optional diagonal corner cutting, disabled by default
+- path cost and search-work diagnostics for every planning request
 - conversion of ROI-local grid paths to world-coordinate cell centers
 - explicit planning outcomes for invalid terminals and unreachable goals
 - optional environment visualization through MatPlotOpenCV
@@ -87,6 +88,14 @@ cost `1`, diagonal moves cost `sqrt(2)`, and diagonal corner cutting is prevente
 unless explicitly enabled. Four-connected movement is available through
 `AStarOptions`. Equal-cost candidates are resolved deterministically with a
 straight-line-deviation tie-breaker.
+
+Every `GridPlanResult` includes `GridPlanDiagnostics`. Successful searches
+report the final movement cost; unsuccessful searches use infinite path cost.
+`expandedNodes` counts non-stale open-set entries processed, including the goal.
+`generatedNodes` counts entries inserted into the open set, including the start
+and any improved replacement entries. `peakOpenSetSize` records the largest
+number of queued entries. Invalid terminals return zero work counts because no
+search is started.
 
 Successful paths include both terminal cells. Failed plans return an empty path
 and one of these statuses:
@@ -283,7 +292,9 @@ int main()
 
     const std::vector<Point2> worldPath =
         gridPathToWorld(planningGrid, result.path);
-    std::cout << "Path contains " << worldPath.size() << " cell centers\n";
+    std::cout << "Path contains " << worldPath.size() << " cell centers at cost "
+              << result.diagnostics.pathCost << '\n';
+    std::cout << "Expanded " << result.diagnostics.expandedNodes << " nodes\n";
     return 0;
 }
 ```

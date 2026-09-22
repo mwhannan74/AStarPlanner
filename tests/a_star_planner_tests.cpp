@@ -950,6 +950,13 @@ namespace
         requireValidFourConnectedPath(grid, result.path, { 0, 0 }, { 5, 2 });
         require(result.path.size() == 8,
             "empty-grid path should have Manhattan distance plus one cells");
+        require(std::abs(result.diagnostics.pathCost - 7.0) <= TEST_EPSILON,
+            "diagnostics should report the successful path's movement cost");
+        require(result.diagnostics.expandedNodes > 0 &&
+                result.diagnostics.generatedNodes >= result.diagnostics.expandedNodes &&
+                result.diagnostics.peakOpenSetSize > 0 &&
+                result.diagnostics.peakOpenSetSize <= result.diagnostics.generatedNodes,
+            "successful search diagnostics should report consistent work counts");
     }
 
     void aStarHandlesCoincidentTerminals()
@@ -964,6 +971,11 @@ namespace
             "coincident terminals inside the grid should succeed");
         require(result.path == std::vector<GridCell>{ { 1, 2 } },
             "coincident terminals should return a one-cell path");
+        require(result.diagnostics.pathCost == 0.0 &&
+                result.diagnostics.expandedNodes == 1 &&
+                result.diagnostics.generatedNodes == 1 &&
+                result.diagnostics.peakOpenSetSize == 1,
+            "coincident terminals should report the single processed start node");
     }
 
     void aStarValidatesTerminals()
@@ -998,7 +1010,11 @@ namespace
     void gridPlanResultHasSafeDefaultState()
     {
         const GridPlanResult result;
-        require(result.status == GridPlanStatus::NoPath && result.path.empty(),
+        require(result.status == GridPlanStatus::NoPath && result.path.empty() &&
+                std::isinf(result.diagnostics.pathCost) &&
+                result.diagnostics.expandedNodes == 0 &&
+                result.diagnostics.generatedNodes == 0 &&
+                result.diagnostics.peakOpenSetSize == 0,
             "default planning result should be a deterministic unsuccessful result");
     }
 
@@ -1102,6 +1118,11 @@ namespace
         const auto result = planner.plan(grid, { 0, 2 }, { 4, 2 });
         require(result.status == GridPlanStatus::NoPath && result.path.empty(),
             "A* should report no path when occupied cells divide the grid");
+        require(std::isinf(result.diagnostics.pathCost) &&
+                result.diagnostics.expandedNodes > 0 &&
+                result.diagnostics.generatedNodes >= result.diagnostics.expandedNodes &&
+                result.diagnostics.peakOpenSetSize > 0,
+            "failed searches should retain work counts but have no finite path cost");
     }
 
     void aStarPlanningPipelineUsesRoiLocalCoordinates()

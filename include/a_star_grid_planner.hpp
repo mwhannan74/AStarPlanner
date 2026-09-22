@@ -62,11 +62,25 @@ namespace astar
         bool preventDiagonalCornerCutting = true;
     };
 
-    /** Planning outcome. Failed results contain an empty path. */
+    /** Search measurements collected by a planning request. */
+    struct GridPlanDiagnostics
+    {
+        /** Final movement cost, or infinity when planning does not succeed. */
+        double pathCost = std::numeric_limits<double>::infinity();
+        /** Non-stale open-set entries removed for processing, including the goal. */
+        std::size_t expandedNodes = 0;
+        /** Open-set entries inserted, including the start and replacement entries. */
+        std::size_t generatedNodes = 0;
+        /** Largest number of entries held by the open set at one time. */
+        std::size_t peakOpenSetSize = 0;
+    };
+
+    /** Planning outcome. Failed results contain an empty path and infinite path cost. */
     struct GridPlanResult
     {
         GridPlanStatus status = GridPlanStatus::NoPath;
         std::vector<GridCell> path;
+        GridPlanDiagnostics diagnostics;
 
         bool succeeded() const noexcept
         {
@@ -114,8 +128,6 @@ namespace astar
 
             const std::size_t startIndex = cellIndex(grid, start);
             const std::size_t goalIndex = cellIndex(grid, goal);
-            if (startIndex == goalIndex)
-                return { GridPlanStatus::Success, { start } };
 
             const std::size_t cellCount =
                 static_cast<std::size_t>(grid.width()) *
@@ -124,9 +136,12 @@ namespace astar
             std::vector<double> costs(cellCount, unreachable);
             std::vector<std::size_t> parents(cellCount, NO_PARENT);
             std::priority_queue<OpenNode, std::vector<OpenNode>, LowerCostFirst> open;
+            GridPlanDiagnostics diagnostics;
 
             costs[startIndex] = 0;
             open.push({ heuristic(start, goal, options), 0.0, 0, startIndex });
+            diagnostics.generatedNodes = 1;
+            diagnostics.peakOpenSetSize = 1;
 
             while (!open.empty())
             {
@@ -134,11 +149,14 @@ namespace astar
                 open.pop();
                 if (current.costFromStart != costs[current.index])
                     continue;
+                ++diagnostics.expandedNodes;
                 if (current.index == goalIndex)
                 {
+                    diagnostics.pathCost = current.costFromStart;
                     return {
                         GridPlanStatus::Success,
-                        reconstructPath(grid, parents, startIndex, goalIndex)
+                        reconstructPath(grid, parents, startIndex, goalIndex),
+                        diagnostics
                     };
                 }
 
@@ -176,10 +194,13 @@ namespace astar
                         lineDeviation(start, goal, neighbor),
                         neighborIndex
                     });
+                    ++diagnostics.generatedNodes;
+                    diagnostics.peakOpenSetSize = std::max(
+                        diagnostics.peakOpenSetSize, open.size());
                 }
             }
 
-            return { GridPlanStatus::NoPath, {} };
+            return { GridPlanStatus::NoPath, {}, diagnostics };
         }
 
     private:
