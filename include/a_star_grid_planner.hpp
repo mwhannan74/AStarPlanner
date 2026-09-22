@@ -111,7 +111,7 @@ namespace astar
                 static_cast<std::size_t>(grid.height());
             const double unreachable = std::numeric_limits<double>::infinity();
             std::vector<double> costs(cellCount, unreachable);
-            std::vector<std::size_t> parents(cellCount, unreachable);
+            std::vector<std::size_t> parents(cellCount, NO_PARENT);
             std::priority_queue<OpenNode, std::vector<OpenNode>, LowerCostFirst> open;
 
             costs[startIndex] = 0;
@@ -188,6 +188,8 @@ namespace astar
         };
 
         inline static constexpr double DIAGONAL_COST = 1.4142135623730950488;
+        inline static constexpr std::size_t NO_PARENT =
+            std::numeric_limits<std::size_t>::max();
         inline static constexpr std::array<NeighborOffset, 8> NEIGHBOR_OFFSETS{ {
             { 1, 0, 1.0 },
             { 1, 1, DIAGONAL_COST },
@@ -285,6 +287,11 @@ namespace astar
                 reversedPath.push_back(indexCell(grid, index));
                 if (index == startIndex)
                     break;
+                if (parents[index] == NO_PARENT)
+                {
+                    throw std::logic_error(
+                        "AStarGridPlanner: incomplete parent chain");
+                }
             }
             std::reverse(reversedPath.begin(), reversedPath.end());
             return reversedPath;

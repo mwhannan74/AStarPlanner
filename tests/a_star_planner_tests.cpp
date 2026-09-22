@@ -794,6 +794,29 @@ namespace
             "detour should be the shortest route through the wall opening");
     }
 
+    void aStarReconstructsCompleteParentChain()
+    {
+        constexpr int corridorLength = 64;
+        const OccupancyGrid grid(
+            GridGeometry(Point2(0.0, 0.0), 1.0, corridorLength, 1),
+            CellState::Free);
+        const AStarGridPlanner planner;
+
+        const auto result = planner.plan(
+            grid, { 0, 0 }, { corridorLength - 1, 0 });
+
+        require(result.succeeded(),
+            "A* should reconstruct a path through a long corridor");
+        require(result.path.size() == static_cast<std::size_t>(corridorLength),
+            "reconstructed path should contain every cell in the parent chain");
+        for (int column = 0; column < corridorLength; ++column)
+        {
+            require(result.path[static_cast<std::size_t>(column)] ==
+                    GridCell{ column, 0 },
+                "reconstructed parent chain should remain ordered from start to goal");
+        }
+    }
+
     void aStarUsesEightConnectedDiagonalPathByDefault()
     {
         const OccupancyGrid grid(
@@ -1019,6 +1042,7 @@ namespace
         { "A* handles coincident terminals", aStarHandlesCoincidentTerminals },
         { "A* validates terminals", aStarValidatesTerminals },
         { "A* routes around obstacle", aStarRoutesAroundObstacle },
+        { "A* reconstructs complete parent chain", aStarReconstructsCompleteParentChain },
         { "A* uses eight-connected diagonal path by default", aStarUsesEightConnectedDiagonalPathByDefault },
         { "A* controls diagonal corner cutting", aStarControlsDiagonalCornerCutting },
         { "A* reports when no path exists", aStarReportsWhenNoPathExists },
