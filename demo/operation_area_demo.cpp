@@ -63,14 +63,14 @@ int main(int argc, char* argv[])
     const Point2 start(5.0, 8.0);
     const Point2 goal(95.0, 52.0);
     AStarPlanner planner(operationArea, obstacles);
-    constexpr double gridResolution = 2.0;
+    constexpr double gridResolution = 0.25;
     const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
         planner.operationArea(),
         planner.obstacles(),
         gridResolution);
     const WorldBounds planningBounds{
-        Point2(4.0, 6.0),
-        Point2(96.0, 54.0)
+        Point2(4.0, 0.0),
+        Point2(96.0, 60.0)
     };
     const OccupancyGrid planningGrid = masterGrid.subgrid(planningBounds);
 
@@ -105,18 +105,19 @@ int main(int argc, char* argv[])
         planningGrid, *startCell, *goalCell);
     if (!plan.succeeded())
     {
-        std::cerr << "Bootstrap grid planner failed\n";
+        std::cerr << "A* grid planner failed: "
+                  << gridPlanStatusName(plan.status) << '\n';
         return 1;
     }
 
     OccupancyGridRenderOptions gridView;
-    gridView.pixelsPerCell = 8;
+    gridView.pixelsPerCell = 3;
     for (const GridCell& cell : plan.path)
         gridView.markers.push_back({ cell, cv::Scalar(255, 120, 0), 2 });
     gridView.markers.push_back({ *startCell, cv::Scalar(0, 180, 0), 3 });
     gridView.markers.push_back({ *goalCell, cv::Scalar(0, 0, 255), 3 });
 
-    std::cout << "Bootstrap straight-line path: "
+    std::cout << "A* path: "
               << plan.path.size() << " cells\n";
     showOccupancyGrid(planningGrid, gridView, "AStarPlanner Planning ROI");
     cv::waitKey(0);

@@ -7,9 +7,8 @@ planning on two-dimensional occupancy grids.
 
 ## Current development checkpoint
 
-The repository began as a copy of VisGraphPlanner. The active code currently
-provides the reusable environment and occupancy-grid model while A* search is
-being designed. It supports:
+The repository began as a copy of VisGraphPlanner. The active code provides a
+reusable environment model, occupancy grid, and initial A* planner. It supports:
 
 - Eigen world-coordinate points and polygon obstacles
 - convex polygon normalization and validation
@@ -23,13 +22,14 @@ being designed. It supports:
 - conservative obstacle rasterization
 - whole-cell containment within the operation area
 - master maps with shared or independently copied planning subgrids
+- four-connected, unit-cost A* search with a Manhattan heuristic
+- explicit planning outcomes for invalid terminals and unreachable goals
 - optional environment visualization through MatPlotOpenCV
 - direct OpenCV occupancy-grid visualization
 
 The former visibility-graph construction, query-vertex injection, adjacency
-model, and Dijkstra search are disabled. The bootstrap grid planner currently
-returns and displays a straight rasterized line; obstacle-avoiding A* search is
-not active yet.
+model, and Dijkstra search are disabled. The grid planner provides basic A*
+search with four-connected, unit-cost movement and a Manhattan heuristic.
 
 ## Assumptions and validation
 
@@ -98,7 +98,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 The two demos visualize both the retained polygon environment and its generated
 occupancy grid. The deterministic operation-area demo also exercises a cropped
-planning ROI and displays the bootstrap planner's straight-line result.
+planning ROI and displays the obstacle-avoiding A* result.
 
 ```powershell
 .\build\Release\a_star_planner_demo.exe
@@ -109,8 +109,8 @@ The first demo builds an explicit world-aligned rectangular grid around a
 randomized field of polygon obstacles. The second builds a master grid directly
 from the operation area's bounding box, frees whole cells inside that area, and
 then overlays the effective obstacles. Both demos crop a planning ROI, call the
-bootstrap planner, and display its straight rasterized result with start and
-goal markers. Pass an optional image filename as the first argument to save the
+A* planner, and display its path with start and goal markers. Pass an optional
+image filename as the first argument to save the
 polygon figure before its windows are displayed.
 
 <p align="center">

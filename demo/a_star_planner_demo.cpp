@@ -120,7 +120,8 @@ int main(int argc, char* argv[])
         planningGrid, *startCell, *goalCell);
     if (!plan.succeeded())
     {
-        std::cerr << "Bootstrap grid planner failed\n";
+        std::cerr << "A* grid planner failed: "
+                  << gridPlanStatusName(plan.status) << '\n';
         return 1;
     }
 
@@ -131,7 +132,7 @@ int main(int argc, char* argv[])
     gridView.markers.push_back({ *startCell, cv::Scalar(0, 180, 0), 3 });
     gridView.markers.push_back({ *goalCell, cv::Scalar(0, 0, 255), 3 });
 
-    std::cout << "Bootstrap straight-line path: "
+    std::cout << "A* path: "
               << plan.path.size() << " cells\n";
     showOccupancyGrid(planningGrid, gridView, "AStarPlanner Planning ROI");
 

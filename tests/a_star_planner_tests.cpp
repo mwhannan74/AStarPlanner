@@ -1,6 +1,5 @@
 /*
- * Environment-model and occupancy-grid tests for AStarPlanner.
- * A* path planning is intentionally not active yet.
+ * Environment-model, occupancy-grid, and A* search tests for AStarPlanner.
  */
 
 #include "a_star_planner.hpp"
@@ -23,9 +22,11 @@ namespace
 {
     using astar::AStarPlanner;
     using astar::AStarGridPlanner;
+    using astar::AStarOptions;
     using astar::CellState;
     using astar::GridCell;
     using astar::GridGeometry;
+    using astar::GridConnectivity;
     using astar::GridPlanStatus;
     using astar::GridRegion;
     using astar::OccupancyGrid;
@@ -53,6 +54,56 @@ namespace
     bool pointsNear(const Point2& lhs, const Point2& rhs)
     {
         return (lhs - rhs).norm() <= TEST_EPSILON;
+    }
+
+    Polygon obstacleInsideCell(const GridCell& cell)
+    {
+        constexpr double inset = 0.25;
+        const double minimumX = static_cast<double>(cell.column) + inset;
+        const double minimumY = static_cast<double>(cell.row) + inset;
+        const double maximumX = static_cast<double>(cell.column + 1) - inset;
+        const double maximumY = static_cast<double>(cell.row + 1) - inset;
+        return {
+            Point2(minimumX, minimumY), Point2(maximumX, minimumY),
+            Point2(maximumX, maximumY), Point2(minimumX, maximumY)
+        };
+    }
+
+    OccupancyGrid gridWithOccupiedCells(
+        int width,
+        int height,
+        const std::vector<GridCell>& occupiedCells)
+    {
+        std::vector<Polygon> obstacles;
+        obstacles.reserve(occupiedCells.size());
+        for (const GridCell& cell : occupiedCells)
+            obstacles.push_back(obstacleInsideCell(cell));
+        return PolygonRasterizer::rasterize(
+            GridGeometry(Point2(0.0, 0.0), 1.0, width, height),
+            obstacles);
+    }
+
+    void requireValidFourConnectedPath(
+        const OccupancyGrid& grid,
+        const std::vector<GridCell>& path,
+        const GridCell& start,
+        const GridCell& goal)
+    {
+        require(!path.empty(), "successful path should not be empty");
+        require(path.front() == start && path.back() == goal,
+            "path should include the requested start and goal cells");
+        for (std::size_t index = 0; index < path.size(); ++index)
+        {
+            require(grid.isTraversable(path[index]),
+                "every returned path cell should be traversable");
+            if (index == 0)
+                continue;
+            const int stepDistance =
+                std::abs(path[index].column - path[index - 1].column) +
+                std::abs(path[index].row - path[index - 1].row);
+            require(stepDistance == 1,
+                "consecutive path cells should be four-connected neighbors");
+        }
     }
 
     double signedAreaTwice(const Polygon& polygon)
@@ -673,21 +724,24 @@ namespace
             "reversing endpoints should reverse the rasterized line");
     }
 
-    void bootstrapPlannerReturnsRasterizedLine()
+    void aStarFindsShortestPathAcrossEmptyGrid()
     {
         const OccupancyGrid grid(
             GridGeometry(Point2(0.0, 0.0), 1.0, 6, 4),
             CellState::Free);
         const AStarGridPlanner planner;
+        AStarOptions options;
+        options.connectivity = GridConnectivity::FourConnected;
 
-        const auto result = planner.plan(grid, { 0, 0 }, { 5, 2 });
+        const auto result = planner.plan(grid, { 0, 0 }, { 5, 2 }, options);
         require(result.succeeded(),
-            "bootstrap planner should succeed for terminals inside the grid");
-        require(result.path == rasterizeGridLine({ 0, 0 }, { 5, 2 }),
-            "bootstrap planner should return the reusable rasterized line");
+            "A* should find a path between free cells in an empty grid");
+        requireValidFourConnectedPath(grid, result.path, { 0, 0 }, { 5, 2 });
+        require(result.path.size() == 8,
+            "empty-grid path should have Manhattan distance plus one cells");
     }
 
-    void bootstrapPlannerHandlesCoincidentTerminals()
+    void aStarHandlesCoincidentTerminals()
     {
         const OccupancyGrid grid(
             GridGeometry(Point2(-2.0, 3.0), 0.5, 3, 3),
@@ -701,16 +755,23 @@ namespace
             "coincident terminals should return a one-cell path");
     }
 
-    void bootstrapPlannerValidatesBoundsButIgnoresOccupancy()
+    void aStarValidatesTerminals()
     {
         const OccupancyGrid occupiedGrid(
             GridGeometry(Point2(0.0, 0.0), 1.0, 4, 4),
             CellState::Occupied);
         const AStarGridPlanner planner;
 
-        const auto occupiedResult = planner.plan(occupiedGrid, { 0, 0 }, { 3, 3 });
-        require(occupiedResult.succeeded() && !occupiedResult.path.empty(),
-            "bootstrap planner should intentionally ignore occupancy in this stage");
+        const auto occupiedStart = planner.plan(occupiedGrid, { 0, 0 }, { 3, 3 });
+        require(occupiedStart.status == GridPlanStatus::StartOccupied &&
+                occupiedStart.path.empty(),
+            "planner should reject an occupied start cell");
+
+        const OccupancyGrid occupiedGoal = gridWithOccupiedCells(4, 4, { { 3, 3 } });
+        const auto goalResult = planner.plan(occupiedGoal, { 0, 0 }, { 3, 3 });
+        require(goalResult.status == GridPlanStatus::GoalOccupied &&
+                goalResult.path.empty(),
+            "planner should reject an occupied goal cell");
 
         const auto invalidStart = planner.plan(occupiedGrid, { -1, 0 }, { 3, 3 });
         require(invalidStart.status == GridPlanStatus::StartOutsideGrid &&
@@ -723,7 +784,50 @@ namespace
             "planner should reject a goal cell outside the planning grid");
     }
 
-    void bootstrapPlanningPipelineUsesRoiLocalCoordinates()
+    void aStarRoutesAroundObstacle()
+    {
+        const OccupancyGrid grid = gridWithOccupiedCells(
+            5, 5, { { 2, 0 }, { 2, 1 }, { 2, 2 }, { 2, 3 } });
+        const AStarGridPlanner planner;
+
+        const auto result = planner.plan(grid, { 0, 2 }, { 4, 2 });
+        require(result.succeeded(), "A* should route through the wall opening");
+        requireValidFourConnectedPath(grid, result.path, { 0, 2 }, { 4, 2 });
+        require(result.path.size() == 9,
+            "detour should be the shortest route through the wall opening");
+    }
+
+    void aStarPrefersShortestPathNearDirectLine()
+    {
+        const OccupancyGrid grid(
+            GridGeometry(Point2(0.0, 0.0), 1.0, 11, 11),
+            CellState::Free);
+        const AStarGridPlanner planner;
+
+        const auto result = planner.plan(grid, { 0, 0 }, { 10, 10 });
+        require(result.succeeded(), "A* should cross an empty square grid");
+        requireValidFourConnectedPath(grid, result.path, { 0, 0 }, { 10, 10 });
+        require(result.path.size() == 21,
+            "line preference must not make the shortest path longer");
+        for (const GridCell& cell : result.path)
+        {
+            require(std::abs(cell.column - cell.row) <= 1,
+                "equal-cost path selection should stay near the direct line");
+        }
+    }
+
+    void aStarReportsWhenNoPathExists()
+    {
+        const OccupancyGrid grid = gridWithOccupiedCells(
+            5, 5, { { 2, 0 }, { 2, 1 }, { 2, 2 }, { 2, 3 }, { 2, 4 } });
+        const AStarGridPlanner planner;
+
+        const auto result = planner.plan(grid, { 0, 2 }, { 4, 2 });
+        require(result.status == GridPlanStatus::NoPath && result.path.empty(),
+            "A* should report no path when occupied cells divide the grid");
+    }
+
+    void aStarPlanningPipelineUsesRoiLocalCoordinates()
     {
         const Polygon operationArea{
             Point2(0.0, 0.0), Point2(10.0, 0.0),
@@ -751,6 +855,7 @@ namespace
         require(result.succeeded() && result.path.front() == *start &&
                 result.path.back() == *goal,
             "planner result should retain the ROI-local start and goal cells");
+        requireValidFourConnectedPath(planningGrid, result.path, *start, *goal);
         require(planningGrid.localToMaster(result.path.front()) == GridCell{ 2, 1 } &&
                 planningGrid.localToMaster(result.path.back()) == GridCell{ 7, 8 },
             "ROI-local result cells should map back to the correct master cells");
@@ -761,15 +866,68 @@ namespace
                     planningGrid.geometry().cellCenterToWorld(result.path.back()),
                     worldGoal),
             "planner result endpoints should map back to their world positions");
+    }
 
-        const bool crossesOccupiedCell = std::any_of(
-            result.path.begin(), result.path.end(),
-            [&planningGrid](const GridCell& cell)
+    void operationAreaDemoEnvironmentFindsPath()
+    {
+        const Polygon operationArea{
+            Point2(0.0, 0.0), Point2(100.0, 0.0),
+            Point2(100.0, 60.0), Point2(0.0, 60.0)
+        };
+        const std::vector<Polygon> obstacles{
             {
-                return !planningGrid.isTraversable(cell);
-            });
-        require(crossesOccupiedCell,
-            "bootstrap path should expose that obstacle avoidance is not active yet");
+                Point2(18.0, -8.0), Point2(28.0, -8.0),
+                Point2(28.0, 36.0), Point2(18.0, 36.0)
+            },
+            {
+                Point2(38.0, 24.0), Point2(48.0, 24.0),
+                Point2(48.0, 68.0), Point2(38.0, 68.0)
+            },
+            {
+                Point2(58.0, -6.0), Point2(68.0, -6.0),
+                Point2(68.0, 38.0), Point2(58.0, 38.0)
+            },
+            {
+                Point2(78.0, 22.0), Point2(88.0, 22.0),
+                Point2(88.0, 70.0), Point2(78.0, 70.0)
+            },
+            {
+                Point2(7.0, 22.0), Point2(14.0, 22.0),
+                Point2(14.0, 32.0), Point2(7.0, 32.0)
+            },
+            {
+                Point2(33.0, 8.0), Point2(37.0, 14.0),
+                Point2(33.0, 20.0), Point2(29.0, 14.0)
+            },
+            {
+                Point2(72.0, 42.0), Point2(76.0, 47.0),
+                Point2(72.0, 52.0), Point2(69.0, 47.0)
+            },
+            {
+                Point2(106.0, 5.0), Point2(114.0, 5.0),
+                Point2(114.0, 15.0), Point2(106.0, 15.0)
+            },
+            {
+                Point2(90.0, 65.0), Point2(105.0, 50.0),
+                Point2(120.0, 65.0), Point2(105.0, 80.0)
+            }
+        };
+        const AStarPlanner environment(operationArea, obstacles);
+        const OccupancyGrid master = PolygonRasterizer::rasterize(
+            environment.operationArea(), environment.obstacles(), 0.25);
+        const OccupancyGrid planningGrid = master.subgrid(
+            WorldBounds{ Point2(4.0, 0.0), Point2(96.0, 60.0) });
+        const auto start = planningGrid.geometry().worldToCell(Point2(5.0, 8.0));
+        const auto goal = planningGrid.geometry().worldToCell(Point2(95.0, 52.0));
+        require(start.has_value() && goal.has_value(),
+            "operation-area demo terminals should be inside its planning ROI");
+
+        const AStarGridPlanner planner;
+        const auto result = planner.plan(planningGrid, *start, *goal);
+        require(result.succeeded(),
+            std::string("operation-area demo should find a path: ") +
+                astar::gridPlanStatusName(result.status));
+        requireValidFourConnectedPath(planningGrid, result.path, *start, *goal);
     }
 
     struct TestCase
@@ -814,10 +972,14 @@ namespace
         { "Grid line rasterizes diagonal segments", gridLineRasterizesDiagonalAndCoincidentSegments },
         { "Grid line rasterizes shallow and steep segments", gridLineRasterizesShallowAndSteepSegments },
         { "Grid line is reversible", gridLineIsReversible },
-        { "Bootstrap planner returns rasterized line", bootstrapPlannerReturnsRasterizedLine },
-        { "Bootstrap planner handles coincident terminals", bootstrapPlannerHandlesCoincidentTerminals },
-        { "Bootstrap planner validates grid bounds", bootstrapPlannerValidatesBoundsButIgnoresOccupancy },
-        { "Bootstrap planning pipeline uses ROI coordinates", bootstrapPlanningPipelineUsesRoiLocalCoordinates }
+        { "A* finds shortest path across empty grid", aStarFindsShortestPathAcrossEmptyGrid },
+        { "A* handles coincident terminals", aStarHandlesCoincidentTerminals },
+        { "A* validates terminals", aStarValidatesTerminals },
+        { "A* routes around obstacle", aStarRoutesAroundObstacle },
+        { "A* prefers shortest path near direct line", aStarPrefersShortestPathNearDirectLine },
+        { "A* reports when no path exists", aStarReportsWhenNoPathExists },
+        { "A* planning pipeline uses ROI coordinates", aStarPlanningPipelineUsesRoiLocalCoordinates },
+        { "Operation-area demo environment finds path", operationAreaDemoEnvironmentFindsPath }
     };
 }
 
