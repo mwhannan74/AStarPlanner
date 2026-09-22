@@ -57,7 +57,7 @@ namespace astar
         }
 
         cv::Mat1b monochrome;
-        cv::bitwise_not(grid.image(), monochrome);
+        cv::bitwise_not(grid.imageView(), monochrome);
 
         cv::Mat3b display;
         cv::cvtColor(monochrome, display, cv::COLOR_GRAY2BGR);

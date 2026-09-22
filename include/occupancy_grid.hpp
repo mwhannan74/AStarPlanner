@@ -57,7 +57,9 @@ namespace astar
 
     enum class SubgridStorage
     {
+        /** Zero-copy ROI that aliases reference-counted source pixels. */
         SharedView,
+        /** Deep copy with independently owned pixels. */
         IndependentCopy
     };
 
@@ -223,11 +225,23 @@ namespace astar
                 return false;
             }
 
-            const Point2 maximum = worldMaximum();
-            return bounds.minimum.x() >= _worldOrigin.x() &&
-                   bounds.minimum.y() >= _worldOrigin.y() &&
-                   bounds.maximum.x() <= maximum.x() &&
-                   bounds.maximum.y() <= maximum.y();
+            const Point2 localMinimum =
+                (bounds.minimum - _worldOrigin) / _resolution;
+            const Point2 localMaximum =
+                (bounds.maximum - _worldOrigin) / _resolution;
+            if (!isFinite(localMinimum) || !isFinite(localMaximum))
+                return false;
+
+            const double tolerance = 1e-12 * std::max({
+                1.0,
+                static_cast<double>(_width), static_cast<double>(_height),
+                std::abs(localMinimum.x()), std::abs(localMinimum.y()),
+                std::abs(localMaximum.x()), std::abs(localMaximum.y())
+            });
+            return localMinimum.x() >= -tolerance &&
+                   localMinimum.y() >= -tolerance &&
+                   localMaximum.x() <= static_cast<double>(_width) + tolerance &&
+                   localMaximum.y() <= static_cast<double>(_height) + tolerance;
         }
 
         bool contains(const GridCell& cell) const noexcept
@@ -409,7 +423,14 @@ namespace astar
 
     class PolygonRasterizer;
 
-    /** Immutable, binary occupancy map backed by a single-channel OpenCV image. */
+    /**
+     * Read-only binary occupancy map backed by a single-channel OpenCV image.
+     *
+     * OccupancyGrid exposes no pixel mutators. imageView() is a zero-copy const
+     * view for OpenCV interoperability; callers must treat its shared storage as
+     * read-only because cv::Mat headers can be shallow-copied into mutable values.
+     * Use cloneImage() when independently writable pixels are required.
+     */
     class OccupancyGrid
     {
     public:
@@ -419,7 +440,7 @@ namespace astar
               _occupancy(
                   _geometry.height(),
                   _geometry.width(),
-                  static_cast<std::uint8_t>(initialState)),
+                  cellValue(initialState)),
               _masterCellOffset{ 0, 0 }
         {
         }
@@ -448,8 +469,14 @@ namespace astar
                 static_cast<std::uint8_t>(CellState::Free);
         }
 
-        const cv::Mat1b& image() const noexcept { return _occupancy; }
+        /** Zero-copy OpenCV view. The referenced shared storage is read-only by contract. */
+        const cv::Mat1b& imageView() const noexcept { return _occupancy; }
+
+        /** Returns an independently owned OpenCV image that callers may modify. */
         cv::Mat1b cloneImage() const { return _occupancy.clone(); }
+
+        [[deprecated("Use imageView() for read-only access or cloneImage() for a writable copy.")]]
+        const cv::Mat1b& image() const noexcept { return imageView(); }
 
         /** Offset of local cell (0, 0) in the source master grid. */
         const GridCell& masterCellOffset() const noexcept
@@ -510,13 +537,24 @@ namespace astar
         }
 
         /**
-         * Creates a cell-aligned planning grid. Shared views retain the master's
-         * reference-counted OpenCV storage; independent copies own their pixels.
+         * Creates a cell-aligned planning grid.
+         *
+         * SharedView is a zero-copy OpenCV ROI. It keeps the underlying pixels
+         * alive through reference counting even after the source grid is
+         * destroyed, may be non-contiguous, and aliases source storage.
+         * IndependentCopy clones the selected pixels and does not alias them.
+         * Both forms preserve the cumulative offset into the original master.
          */
         OccupancyGrid subgrid(
             const GridRegion& region,
             SubgridStorage storage = SubgridStorage::SharedView) const
         {
+            if (storage != SubgridStorage::SharedView &&
+                storage != SubgridStorage::IndependentCopy)
+            {
+                throw std::invalid_argument(
+                    "OccupancyGrid::subgrid: unsupported storage policy");
+            }
             validateRegion(region);
             const int imageRow = height() - (region.lowerLeft.row + region.height);
             const cv::Rect imageRegion(
@@ -548,6 +586,16 @@ namespace astar
 
     private:
         friend class PolygonRasterizer;
+
+        static std::uint8_t cellValue(CellState state)
+        {
+            if (state != CellState::Free && state != CellState::Occupied)
+            {
+                throw std::invalid_argument(
+                    "OccupancyGrid: unsupported initial cell state");
+            }
+            return static_cast<std::uint8_t>(state);
+        }
 
         OccupancyGrid(
             GridGeometry geometry,

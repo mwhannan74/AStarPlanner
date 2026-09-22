@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <exception>
 #include <iomanip>
 #include <iostream>
@@ -506,11 +507,19 @@ namespace
             }
         }
 
-        require(cv::countNonZero(freeGrid.image()) == 0,
+        require(cv::countNonZero(freeGrid.imageView()) == 0,
             "free initialization should fill the OpenCV image with zero");
-        require(cv::countNonZero(occupiedGrid.image()) ==
+        require(cv::countNonZero(occupiedGrid.imageView()) ==
                 geometry.width() * geometry.height(),
             "occupied initialization should fill every OpenCV image pixel");
+
+        requireThrows<std::invalid_argument>(
+            [&geometry]
+            {
+                OccupancyGrid invalid(
+                    geometry, static_cast<CellState>(1));
+            },
+            "occupancy grid should reject a non-binary initial cell state");
     }
 
     void operationAreaPaintsCoveredCellsFree()
@@ -634,7 +643,7 @@ namespace
             "obstacle should override operation-area free space");
         require(grid.isTraversable({ 0, 0 }),
             "operation-area interior cells should remain free");
-        require(grid.image().rows == 3 && grid.image().cols == 3,
+        require(grid.imageView().rows == 3 && grid.imageView().cols == 3,
             "OpenCV image dimensions should match grid dimensions");
     }
 
@@ -653,7 +662,7 @@ namespace
             geometry, operationArea, { obstacle });
 
         cv::Mat1b nonBinaryPixels;
-        cv::inRange(grid.image(), cv::Scalar(1), cv::Scalar(254), nonBinaryPixels);
+        cv::inRange(grid.imageView(), cv::Scalar(1), cv::Scalar(254), nonBinaryPixels);
         require(cv::countNonZero(nonBinaryPixels) == 0,
             "OpenCV polygon painting should retain binary occupancy values");
     }
@@ -725,9 +734,11 @@ namespace
             "local and master cells should represent the same world position");
 
         const int masterImageRow = master.height() - (region.lowerLeft.row + region.height);
-        require(window.image().data ==
-                master.image().ptr(masterImageRow) + region.lowerLeft.column,
+        require(window.imageView().data ==
+                master.imageView().ptr(masterImageRow) + region.lowerLeft.column,
             "default subgrid should share the selected OpenCV ROI storage");
+        require(!window.imageView().isContinuous(),
+            "multi-row shared ROI narrower than its source should be non-contiguous");
     }
 
     void copiedSubgridOwnsIndependentPixels()
@@ -738,10 +749,39 @@ namespace
         const OccupancyGrid copy = master.subgrid(
             region, SubgridStorage::IndependentCopy);
 
-        require(copy.image().data != master.image().data,
+        require(copy.imageView().data != master.imageView().data,
             "copied subgrid should own independent OpenCV storage");
-        require(cv::countNonZero(copy.image()) == 4,
+        require(cv::countNonZero(copy.imageView()) == 4,
             "copied subgrid should preserve occupancy values");
+
+        cv::Mat1b writableClone = master.cloneImage();
+        writableClone.setTo(static_cast<std::uint8_t>(CellState::Free));
+        require(cv::countNonZero(master.imageView()) == 16,
+            "modifying cloneImage output should not affect the source grid");
+
+        requireThrows<std::invalid_argument>(
+            [&master, &region]
+            {
+                static_cast<void>(master.subgrid(
+                    region, static_cast<SubgridStorage>(99)));
+            },
+            "subgrid should reject an unsupported storage policy");
+    }
+
+    void sharedSubgridRetainsStorageLifetime()
+    {
+        const OccupancyGrid window = []
+        {
+            const OccupancyGrid master = gridWithOccupiedCells(
+                4, 4, { { 1, 1 }, { 2, 2 } });
+            return master.subgrid({ { 1, 1 }, 2, 2 });
+        }();
+
+        require(window.at({ 0, 0 }) == CellState::Occupied &&
+                window.at({ 1, 1 }) == CellState::Occupied,
+            "shared subgrid should retain referenced pixels after source destruction");
+        require(window.isTraversable({ 1, 0 }) && window.isTraversable({ 0, 1 }),
+            "shared subgrid should retain free pixels after source destruction");
     }
 
     void worldBoundsProduceOutwardRoundedSubgrid()
@@ -768,6 +808,32 @@ namespace
                     WorldBounds{ Point2(-0.1, 0.0), Point2(2.0, 2.0) }));
             },
             "subgrid bounds outside the master should be rejected");
+    }
+
+    void worldBoundsContainmentToleratesRoundoff()
+    {
+        const OccupancyGrid grid(
+            GridGeometry(Point2(0.1, 0.2), 0.1, 3, 4),
+            CellState::Free);
+        const Point2 maximum = grid.geometry().worldMaximum();
+        const WorldBounds roundedBounds{
+            grid.geometry().worldOrigin(),
+            Point2(
+                std::nextafter(maximum.x(), std::numeric_limits<double>::infinity()),
+                std::nextafter(maximum.y(), std::numeric_limits<double>::infinity()))
+        };
+
+        require(grid.geometry().contains(roundedBounds),
+            "grid bounds should tolerate one representable step of roundoff");
+        require(grid.regionCovering(roundedBounds) == grid.fullRegion(),
+            "roundoff at the maximum boundary should still cover the full grid");
+
+        const WorldBounds outsideBounds{
+            grid.geometry().worldOrigin(),
+            Point2(maximum.x() + 1e-6, maximum.y())
+        };
+        require(!grid.geometry().contains(outsideBounds),
+            "containment tolerance should not accept materially outside bounds");
     }
 
     void nestedSubgridsRetainMasterOffset()
@@ -1147,7 +1213,9 @@ namespace
         { "Validated environment feeds master rasterization", validatedEnvironmentFeedsMasterRasterization },
         { "Subgrid preserves coordinates", subgridPreservesWorldAndMasterCoordinates },
         { "Copied subgrid owns independent pixels", copiedSubgridOwnsIndependentPixels },
+        { "Shared subgrid retains storage lifetime", sharedSubgridRetainsStorageLifetime },
         { "World bounds produce rounded subgrid", worldBoundsProduceOutwardRoundedSubgrid },
+        { "World bounds containment tolerates roundoff", worldBoundsContainmentToleratesRoundoff },
         { "Nested subgrids retain master offset", nestedSubgridsRetainMasterOffset },
         { "A* finds shortest path across empty grid", aStarFindsShortestPathAcrossEmptyGrid },
         { "A* handles coincident terminals", aStarHandlesCoincidentTerminals },

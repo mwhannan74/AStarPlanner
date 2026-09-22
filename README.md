@@ -197,7 +197,14 @@ maps. `GridGeometry::covering(...)` derives rectangular cell dimensions from
 world bounds or polygon bounds. `GridGeometry::alignedCovering(...)` additionally
 keeps cell boundaries on a stable world lattice. A planning subgrid uses the
 master resolution and records its cumulative master-cell offset; it can either
-share an OpenCV ROI or own an independent copy.
+share an OpenCV ROI or own an independent copy. `SharedView` is the default: it
+keeps reference-counted source pixels alive, aliases their storage, and may be
+non-contiguous. `IndependentCopy` owns a deep copy of the selected pixels.
+
+`OccupancyGrid` is read-only through its grid API. `imageView()` provides a
+zero-copy OpenCV view whose shared storage must be treated as read-only;
+`cloneImage()` returns an independent image suitable for modification. The
+deprecated `image()` name remains temporarily available for source compatibility.
 
 ## License
 
