@@ -131,6 +131,12 @@ tracking, path reconstruction, or diagnostics. Equal-cost candidates use a
 deterministic straight-line-deviation tie-breaker.
 `gridSearchAlgorithmName()` provides a readable name for the selected mode.
 
+Grid costs are accumulated in floating point because diagonal moves cost
+`sqrt(2)`. Relaxation uses a scale-aware tolerance of eight machine epsilons so
+that differently ordered sums of mathematically equivalent steps do not create
+replacement queue entries or cell re-expansions. Cost improvements larger than
+that numerical tolerance are processed normally.
+
 Every `GridPlanResult` includes `GridPlanDiagnostics`. Successful searches
 report the final movement cost; unsuccessful searches use infinite path cost.
 `expandedNodes` counts non-stale open-set entries processed, including the goal.

@@ -1426,6 +1426,21 @@ namespace
         const GridCell goal{ gridSize - 3, gridSize - 3 };
         const AStarGridPlanner planner;
 
+        AStarOptions detailedAStarOptions;
+        detailedAStarOptions.collectDetailedDiagnostics = true;
+        const GridPlanResult detailedAStarResult = planner.plan(
+            grid, start, goal, detailedAStarOptions);
+        require(detailedAStarResult.succeeded() &&
+                detailedAStarResult.detailedDiagnostics.has_value(),
+            "A* should provide requested detailed diagnostics");
+        require(
+            detailedAStarResult.detailedDiagnostics->repeatedExpansions == 0 &&
+            detailedAStarResult.detailedDiagnostics->
+                postExpansionCostImprovements == 0 &&
+            detailedAStarResult.detailedDiagnostics->
+                maximumExpansionsPerCell == 1,
+            "A* should ignore roundoff-only cost changes on the barrier map");
+
         AStarOptions normalOptions;
         normalOptions.algorithm = GridSearchAlgorithm::WeightedAStar;
         normalOptions.heuristicWeight = 1.5;

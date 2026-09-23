@@ -336,7 +336,8 @@ namespace astar
                     const std::size_t neighborIndex = cellIndex(grid, neighbor);
                     const double candidateCost =
                         current.costFromStart + offset.movementCost;
-                    if (candidateCost >= costs[neighborIndex])
+                    if (!isMeaningfulCostImprovement(
+                            candidateCost, costs[neighborIndex]))
                         continue;
 
                     if (detailedDiagnostics)
@@ -484,6 +485,28 @@ namespace astar
             }
             throw std::invalid_argument(
                 "AStarGridPlanner: unsupported search algorithm");
+        }
+
+        /**
+         * Rejects roundoff-only changes from differently ordered sums of the
+         * same unit and diagonal step costs. Eight machine epsilons cover the
+         * observed few-ULP accumulation differences while remaining many orders
+         * below a meaningful grid-path cost change on representable maps.
+         */
+        static bool isMeaningfulCostImprovement(
+            double candidateCost,
+            double recordedCost) noexcept
+        {
+            if (!std::isfinite(recordedCost))
+                return true;
+            constexpr double relativeTolerance =
+                8.0 * std::numeric_limits<double>::epsilon();
+            const double scale = std::max({
+                1.0,
+                std::abs(candidateCost),
+                std::abs(recordedCost)
+            });
+            return recordedCost - candidateCost > relativeTolerance * scale;
         }
 
         static double heuristic(
