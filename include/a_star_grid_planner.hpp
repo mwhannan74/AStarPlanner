@@ -336,6 +336,8 @@ namespace astar
                     const std::size_t neighborIndex = cellIndex(grid, neighbor);
                     const double candidateCost =
                         current.costFromStart + offset.movementCost;
+                    if (candidateCost >= costs[neighborIndex])
+                        continue;
                     if (!isMeaningfulCostImprovement(
                             candidateCost, costs[neighborIndex]))
                         continue;
@@ -491,7 +493,9 @@ namespace astar
          * Rejects roundoff-only changes from differently ordered sums of the
          * same unit and diagonal step costs. Eight machine epsilons cover the
          * observed few-ULP accumulation differences while remaining many orders
-         * below a meaningful grid-path cost change on representable maps.
+         * below a meaningful grid-path cost change on representable maps. The
+         * caller first rejects costs that are not strictly lower so this more
+         * expensive scale-aware check runs only for potential improvements.
          */
         static bool isMeaningfulCostImprovement(
             double candidateCost,
