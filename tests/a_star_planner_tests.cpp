@@ -6,13 +6,16 @@
 #include "a_star_grid_planner.hpp"
 #include "occupancy_grid.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <exception>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
+#include <random>
 #include <stdexcept>
 #include <sstream>
 #include <string>
@@ -115,7 +118,8 @@ namespace
         const OccupancyGrid& grid,
         const std::vector<GridCell>& path,
         const GridCell& start,
-        const GridCell& goal)
+        const GridCell& goal,
+        bool preventDiagonalCornerCutting = true)
     {
         require(!path.empty(), "successful path should not be empty");
         require(path.front() == start && path.back() == goal,
@@ -132,7 +136,8 @@ namespace
             const int rowStep = std::abs(path[index].row - previous.row);
             require(std::max(columnStep, rowStep) == 1,
                 "consecutive path cells should be eight-connected neighbors");
-            if (columnStep == 1 && rowStep == 1)
+            if (preventDiagonalCornerCutting &&
+                columnStep == 1 && rowStep == 1)
             {
                 require(
                     grid.isTraversable({ path[index].column, previous.row }) &&
@@ -140,6 +145,27 @@ namespace
                     "diagonal path steps should not cut occupied corners");
             }
         }
+    }
+
+    double pathMovementCost(const std::vector<GridCell>& path)
+    {
+        double cost = 0.0;
+        for (std::size_t index = 1; index < path.size(); ++index)
+        {
+            const GridCell& previous = path[index - 1];
+            const GridCell& current = path[index];
+            const bool diagonal =
+                previous.column != current.column &&
+                previous.row != current.row;
+            cost += diagonal ? std::sqrt(2.0) : 1.0;
+        }
+        return cost;
+    }
+
+    bool costsNear(double lhs, double rhs)
+    {
+        const double scale = std::max({ 1.0, std::abs(lhs), std::abs(rhs) });
+        return std::abs(lhs - rhs) <= 1e-10 * scale;
     }
 
     double signedAreaTwice(const Polygon& polygon)
@@ -1087,6 +1113,163 @@ namespace
             "search algorithm name should identify Dijkstra mode");
     }
 
+    void randomizedAStarMatchesDijkstra()
+    {
+        struct SearchConfiguration
+        {
+            GridConnectivity connectivity;
+            bool preventDiagonalCornerCutting;
+            const char* name;
+        };
+
+        const std::vector<SearchConfiguration> configurations{
+            { GridConnectivity::FourConnected, true, "four-connected" },
+            { GridConnectivity::EightConnected, true,
+                "eight-connected protected" },
+            { GridConnectivity::EightConnected, false,
+                "eight-connected permissive" }
+        };
+
+        constexpr int randomMapCount = 200;
+        std::mt19937 generator(0xA57A2026u);
+        std::uniform_int_distribution<int> dimensionDistribution(8, 30);
+        std::size_t successfulComparisons = 0;
+        std::size_t noPathComparisons = 0;
+
+        for (int mapIndex = 0; mapIndex < randomMapCount; ++mapIndex)
+        {
+            const int width = dimensionDistribution(generator);
+            const int height = dimensionDistribution(generator);
+            std::uniform_int_distribution<int> columnDistribution(0, width - 1);
+            std::uniform_int_distribution<int> rowDistribution(0, height - 1);
+            const GridCell start{
+                columnDistribution(generator), rowDistribution(generator)
+            };
+            GridCell goal{
+                columnDistribution(generator), rowDistribution(generator)
+            };
+            while (goal == start)
+            {
+                goal = {
+                    columnDistribution(generator), rowDistribution(generator)
+                };
+            }
+
+            constexpr double obstacleDensities[]{ 0.05, 0.15, 0.25, 0.35 };
+            const double obstacleDensity = obstacleDensities[
+                mapIndex % static_cast<int>(std::size(obstacleDensities))];
+            std::bernoulli_distribution occupiedDistribution(obstacleDensity);
+            std::vector<GridCell> occupiedCells;
+            for (int row = 0; row < height; ++row)
+            {
+                for (int column = 0; column < width; ++column)
+                {
+                    const GridCell cell{ column, row };
+                    if (cell != start && cell != goal &&
+                        occupiedDistribution(generator))
+                    {
+                        occupiedCells.push_back(cell);
+                    }
+                }
+            }
+            const OccupancyGrid grid = gridWithOccupiedCells(
+                width, height, occupiedCells);
+            const AStarGridPlanner planner;
+
+            for (const SearchConfiguration& configuration : configurations)
+            {
+                AStarOptions aStarOptions;
+                aStarOptions.algorithm = GridSearchAlgorithm::AStar;
+                aStarOptions.connectivity = configuration.connectivity;
+                aStarOptions.preventDiagonalCornerCutting =
+                    configuration.preventDiagonalCornerCutting;
+
+                AStarOptions dijkstraOptions = aStarOptions;
+                dijkstraOptions.algorithm = GridSearchAlgorithm::Dijkstra;
+
+                const GridPlanResult aStarResult = planner.plan(
+                    grid, start, goal, aStarOptions);
+                const GridPlanResult dijkstraResult = planner.plan(
+                    grid, start, goal, dijkstraOptions);
+
+                std::ostringstream context;
+                context << "random map " << mapIndex << " ("
+                        << width << 'x' << height << ", "
+                        << configuration.name << ")";
+                require(
+                    aStarResult.succeeded() == dijkstraResult.succeeded(),
+                    "A* and Dijkstra should agree on reachability for " +
+                        context.str());
+
+                if (!aStarResult.succeeded())
+                {
+                    ++noPathComparisons;
+                    require(
+                        aStarResult.status == GridPlanStatus::NoPath &&
+                        dijkstraResult.status == GridPlanStatus::NoPath &&
+                        aStarResult.path.empty() &&
+                        dijkstraResult.path.empty() &&
+                        std::isinf(aStarResult.diagnostics.pathCost) &&
+                        std::isinf(dijkstraResult.diagnostics.pathCost),
+                        "unreachable searches should return consistent failures for " +
+                            context.str());
+                    continue;
+                }
+
+                ++successfulComparisons;
+                if (configuration.connectivity == GridConnectivity::FourConnected)
+                {
+                    requireValidFourConnectedPath(
+                        grid, aStarResult.path, start, goal);
+                    requireValidFourConnectedPath(
+                        grid, dijkstraResult.path, start, goal);
+                }
+                else
+                {
+                    requireValidEightConnectedPath(
+                        grid,
+                        aStarResult.path,
+                        start,
+                        goal,
+                        configuration.preventDiagonalCornerCutting);
+                    requireValidEightConnectedPath(
+                        grid,
+                        dijkstraResult.path,
+                        start,
+                        goal,
+                        configuration.preventDiagonalCornerCutting);
+                }
+
+                const double measuredAStarCost =
+                    pathMovementCost(aStarResult.path);
+                const double measuredDijkstraCost =
+                    pathMovementCost(dijkstraResult.path);
+                require(
+                    costsNear(
+                        aStarResult.diagnostics.pathCost,
+                        measuredAStarCost) &&
+                    costsNear(
+                        dijkstraResult.diagnostics.pathCost,
+                        measuredDijkstraCost),
+                    "reported costs should match reconstructed paths for " +
+                        context.str());
+                require(
+                    costsNear(
+                        aStarResult.diagnostics.pathCost,
+                        dijkstraResult.diagnostics.pathCost),
+                    "A* and Dijkstra should return the same optimal cost for " +
+                        context.str());
+            }
+        }
+
+        require(successfulComparisons > 0 && noPathComparisons > 0,
+            "randomized comparison should cover reachable and unreachable requests");
+        require(
+            successfulComparisons + noPathComparisons ==
+                static_cast<std::size_t>(randomMapCount) * configurations.size(),
+            "randomized comparison should execute every configured request");
+    }
+
     void weightedAStarUsesSharedWeightedHeuristic()
     {
         std::vector<GridCell> wall;
@@ -1599,6 +1782,7 @@ namespace
         { "Grid plan result has safe default state", gridPlanResultHasSafeDefaultState },
         { "Grid planner rejects unsupported options", gridPlannerRejectsUnsupportedOptions },
         { "Dijkstra matches A* optimal cost", dijkstraMatchesAStarOptimalCost },
+        { "Randomized A* matches Dijkstra", randomizedAStarMatchesDijkstra },
         { "Weighted A* uses shared weighted heuristic", weightedAStarUsesSharedWeightedHeuristic },
         { "Search debug callback publishes state grid", searchDebugCallbackPublishesReusableStateGrid },
         { "Detailed diagnostics track repeated expansions", detailedSearchDiagnosticsTrackRepeatedExpansions },
