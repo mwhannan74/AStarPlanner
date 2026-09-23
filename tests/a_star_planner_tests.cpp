@@ -1219,6 +1219,75 @@ namespace
             "terminal validation failures should not allocate or publish debug state");
     }
 
+    void detailedSearchDiagnosticsTrackRepeatedExpansions()
+    {
+        std::vector<GridCell> barriers;
+        constexpr int gridSize = 50;
+        constexpr int barrierCount = 6;
+        for (int barrier = 0; barrier < barrierCount; ++barrier)
+        {
+            const int column =
+                (barrier + 1) * gridSize / (barrierCount + 1);
+            const bool gapAtTop = barrier % 2 == 0;
+            const int firstRow = gapAtTop ? 0 : gridSize / 4;
+            const int pastLastRow = gapAtTop
+                ? 3 * gridSize / 4
+                : gridSize;
+            for (int row = firstRow; row < pastLastRow; ++row)
+                barriers.push_back({ column, row });
+        }
+
+        const OccupancyGrid grid = gridWithOccupiedCells(
+            gridSize, gridSize, barriers);
+        const GridCell start{ 2, 2 };
+        const GridCell goal{ gridSize - 3, gridSize - 3 };
+        const AStarGridPlanner planner;
+
+        AStarOptions normalOptions;
+        normalOptions.algorithm = GridSearchAlgorithm::WeightedAStar;
+        normalOptions.heuristicWeight = 1.5;
+        const GridPlanResult normalResult = planner.plan(
+            grid, start, goal, normalOptions);
+        require(normalResult.succeeded() && !normalResult.detailedDiagnostics,
+            "normal planning should not allocate detailed diagnostics");
+
+        AStarOptions detailedOptions = normalOptions;
+        detailedOptions.collectDetailedDiagnostics = true;
+        const GridPlanResult detailedResult = planner.plan(
+            grid, start, goal, detailedOptions);
+        require(detailedResult.succeeded() &&
+                detailedResult.path == normalResult.path &&
+                detailedResult.diagnostics.pathCost ==
+                    normalResult.diagnostics.pathCost,
+            "detailed diagnostics should not change the planning result");
+        require(detailedResult.detailedDiagnostics.has_value(),
+            "requested detailed diagnostics should be present");
+
+        const auto& detailed = *detailedResult.detailedDiagnostics;
+        require(detailed.expansionCounts.rows == grid.height() &&
+                detailed.expansionCounts.cols == grid.width(),
+            "expansion-count image dimensions should match the planning grid");
+
+        const std::size_t matrixExpansionCount = static_cast<std::size_t>(
+            cv::sum(detailed.expansionCounts)[0]);
+        const std::size_t matrixUniqueCount = static_cast<std::size_t>(
+            cv::countNonZero(detailed.expansionCounts));
+        double matrixMaximum = 0.0;
+        cv::minMaxLoc(
+            detailed.expansionCounts, nullptr, &matrixMaximum);
+        require(matrixExpansionCount ==
+                    detailedResult.diagnostics.expandedNodes &&
+                matrixUniqueCount == detailed.uniqueExpandedCells &&
+                detailed.uniqueExpandedCells + detailed.repeatedExpansions ==
+                    detailedResult.diagnostics.expandedNodes &&
+                static_cast<std::size_t>(matrixMaximum) ==
+                    detailed.maximumExpansionsPerCell,
+            "detailed counters should agree with the expansion-count image");
+        require(detailed.repeatedExpansions > 0 &&
+                detailed.maximumExpansionsPerCell > 1,
+            "weighted alternating-barrier search should expose repeated expansions");
+    }
+
     void aStarRoutesAroundObstacle()
     {
         const OccupancyGrid grid = gridWithOccupiedCells(
@@ -1525,6 +1594,7 @@ namespace
         { "Dijkstra matches A* optimal cost", dijkstraMatchesAStarOptimalCost },
         { "Weighted A* uses shared weighted heuristic", weightedAStarUsesSharedWeightedHeuristic },
         { "Search debug callback publishes state grid", searchDebugCallbackPublishesReusableStateGrid },
+        { "Detailed diagnostics track repeated expansions", detailedSearchDiagnosticsTrackRepeatedExpansions },
         { "A* routes around obstacle", aStarRoutesAroundObstacle },
         { "A* reconstructs complete parent chain", aStarReconstructsCompleteParentChain },
         { "A* uses eight-connected diagonal path by default", aStarUsesEightConnectedDiagonalPathByDefault },

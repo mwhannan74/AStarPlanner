@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <queue>
 #include <utility>
 #include <vector>
@@ -88,6 +89,8 @@ namespace astar
         GridConnectivity connectivity = GridConnectivity::EightConnected;
         /** Applies only to diagonal moves in an eight-connected search. */
         bool preventDiagonalCornerCutting = true;
+        /** Records per-cell expansion counts for diagnostics at additional cost. */
+        bool collectDetailedDiagnostics = false;
     };
 
     /** Search measurements collected by a planning request. */
@@ -103,12 +106,29 @@ namespace astar
         std::size_t peakOpenSetSize = 0;
     };
 
+    /** Optional detailed search measurements requested through AStarOptions. */
+    struct GridSearchDetailedDiagnostics
+    {
+        /** Expansion count per cell in OpenCV image coordinates. */
+        cv::Mat1i expansionCounts;
+        /** Number of different cells expanded at least once. */
+        std::size_t uniqueExpandedCells = 0;
+        /** Expansion events after a cell's first expansion. */
+        std::size_t repeatedExpansions = 0;
+        /** Queue entries discarded because a better cost was already recorded. */
+        std::size_t staleOpenSetEntries = 0;
+        /** Largest expansion count recorded for one cell. */
+        std::size_t maximumExpansionsPerCell = 0;
+    };
+
     /** Planning outcome. Failed results contain an empty path and infinite path cost. */
     struct GridPlanResult
     {
         GridPlanStatus status = GridPlanStatus::NoPath;
         std::vector<GridCell> path;
         GridPlanDiagnostics diagnostics;
+        /** Present only when collectDetailedDiagnostics is enabled. */
+        std::optional<GridSearchDetailedDiagnostics> detailedDiagnostics;
 
         bool succeeded() const noexcept
         {
@@ -152,6 +172,9 @@ namespace astar
      * Supplying @p debugCallback enables a reusable single-channel state image
      * and synchronous callbacks after each accepted expansion and after the
      * final path or exhausted search. An empty callback allocates no debug image.
+     * Enabling AStarOptions::collectDetailedDiagnostics separately records a
+     * per-cell expansion-count image and detailed counters in the result. This
+     * allocation and tracking are disabled by default.
      *
      * @throws std::invalid_argument if options contain an unsupported search
      * algorithm or connectivity value.
@@ -194,6 +217,13 @@ namespace astar
             std::vector<std::size_t> parents(cellCount, NO_PARENT);
             std::priority_queue<OpenNode, std::vector<OpenNode>, LowerCostFirst> open;
             GridPlanDiagnostics diagnostics;
+            std::optional<GridSearchDetailedDiagnostics> detailedDiagnostics;
+            if (options.collectDetailedDiagnostics)
+            {
+                detailedDiagnostics.emplace();
+                detailedDiagnostics->expansionCounts = cv::Mat1i(
+                    grid.height(), grid.width(), 0);
+            }
             const bool debugEnabled = static_cast<bool>(debugCallback);
             cv::Mat1b debugState;
             if (debugEnabled)
@@ -232,9 +262,27 @@ namespace astar
                 const OpenNode current = open.top();
                 open.pop();
                 if (current.costFromStart != costs[current.index])
+                {
+                    if (detailedDiagnostics)
+                        ++detailedDiagnostics->staleOpenSetEntries;
                     continue;
+                }
                 ++diagnostics.expandedNodes;
                 const GridCell currentCell = indexCell(grid, current.index);
+                if (detailedDiagnostics)
+                {
+                    const cv::Point pixel = grid.geometry().cellToImage(currentCell);
+                    int& expansionCount =
+                        detailedDiagnostics->expansionCounts(pixel.y, pixel.x);
+                    if (expansionCount == 0)
+                        ++detailedDiagnostics->uniqueExpandedCells;
+                    else
+                        ++detailedDiagnostics->repeatedExpansions;
+                    ++expansionCount;
+                    detailedDiagnostics->maximumExpansionsPerCell = std::max(
+                        detailedDiagnostics->maximumExpansionsPerCell,
+                        static_cast<std::size_t>(expansionCount));
+                }
                 if (debugEnabled)
                     setDebugState(currentCell, GridSearchCellState::Current);
                 if (current.index == goalIndex)
@@ -252,7 +300,8 @@ namespace astar
                     return {
                         GridPlanStatus::Success,
                         std::move(path),
-                        diagnostics
+                        diagnostics,
+                        std::move(detailedDiagnostics)
                     };
                 }
 
@@ -305,7 +354,12 @@ namespace astar
 
             if (debugEnabled)
                 debugCallback(debugState);
-            return { GridPlanStatus::NoPath, {}, diagnostics };
+            return {
+                GridPlanStatus::NoPath,
+                {},
+                diagnostics,
+                std::move(detailedDiagnostics)
+            };
         }
 
     private:

@@ -139,6 +139,14 @@ and any improved replacement entries. `peakOpenSetSize` records the largest
 number of queued entries. Invalid terminals return zero work counts because no
 search is started.
 
+Set `AStarOptions::collectDetailedDiagnostics` only when investigating search
+behavior. The resulting `GridPlanResult::detailedDiagnostics` contains an
+OpenCV-oriented per-cell expansion-count image plus unique-expansion,
+re-expansion, stale-queue-entry, and maximum-per-cell counters. Collection is
+disabled by default because it allocates an integer matrix and updates it for
+every accepted expansion. Use a separate uninstrumented request for performance
+timing.
+
 Successful paths include both terminal cells. Failed plans return an empty path
 and one of these statuses:
 
@@ -286,8 +294,10 @@ builds on the same machine under similar system load.
 alternating-barrier scenario for one selected algorithm. It first performs an
 uninstrumented search for a meaningful baseline time, then repeats the search
 with the debug callback enabled. Sampled search frames are animated in an
-OpenCV window, and the final state is saved as a PNG with its color key and
-search diagnostics embedded beside the map.
+OpenCV window. The final PNG places the categorical search state beside a
+log-scaled expansion-count heat map and embeds their color key and search
+diagnostics. The heat map makes cells expanded more than once visible even
+though their final categorical state is simply `Expanded`.
 
 ```powershell
 .\build\Release\a_star_search_debug.exe --algorithm astar
