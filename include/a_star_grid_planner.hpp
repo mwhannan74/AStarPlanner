@@ -119,6 +119,15 @@ namespace astar
         std::size_t staleOpenSetEntries = 0;
         /** Largest expansion count recorded for one cell. */
         std::size_t maximumExpansionsPerCell = 0;
+        /** Accepted lower-cost updates to cells that had already been expanded. */
+        std::size_t postExpansionCostImprovements = 0;
+        /** Smallest absolute post-expansion cost improvement, or infinity if none. */
+        double minimumPostExpansionCostImprovement =
+            std::numeric_limits<double>::infinity();
+        /** Largest absolute post-expansion cost improvement. */
+        double maximumPostExpansionCostImprovement = 0.0;
+        /** Largest improvement divided by the scale of its old and new costs. */
+        double maximumRelativePostExpansionCostImprovement = 0.0;
     };
 
     /** Planning outcome. Failed results contain an empty path and infinite path cost. */
@@ -329,6 +338,36 @@ namespace astar
                         current.costFromStart + offset.movementCost;
                     if (candidateCost >= costs[neighborIndex])
                         continue;
+
+                    if (detailedDiagnostics)
+                    {
+                        const cv::Point neighborPixel =
+                            grid.geometry().cellToImage(neighbor);
+                        if (detailedDiagnostics->expansionCounts(
+                                neighborPixel.y, neighborPixel.x) > 0)
+                        {
+                            const double improvement =
+                                costs[neighborIndex] - candidateCost;
+                            const double costScale = std::max({
+                                1.0,
+                                std::abs(costs[neighborIndex]),
+                                std::abs(candidateCost)
+                            });
+                            ++detailedDiagnostics->postExpansionCostImprovements;
+                            detailedDiagnostics->minimumPostExpansionCostImprovement =
+                                std::min(
+                                    detailedDiagnostics->minimumPostExpansionCostImprovement,
+                                    improvement);
+                            detailedDiagnostics->maximumPostExpansionCostImprovement =
+                                std::max(
+                                    detailedDiagnostics->maximumPostExpansionCostImprovement,
+                                    improvement);
+                            detailedDiagnostics->maximumRelativePostExpansionCostImprovement =
+                                std::max(
+                                    detailedDiagnostics->maximumRelativePostExpansionCostImprovement,
+                                    improvement / costScale);
+                        }
+                    }
 
                     costs[neighborIndex] = candidateCost;
                     parents[neighborIndex] = current.index;

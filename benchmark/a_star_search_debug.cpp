@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -32,6 +33,15 @@ namespace
     constexpr double CELL_RESOLUTION_METERS = 25.0;
     constexpr double SAFETY_RADIUS_METERS = CELL_RESOLUTION_METERS;
     constexpr double DEFAULT_WEIGHT = 1.5;
+
+    const cv::Scalar HEAT_NEVER{ 255, 255, 255 };
+    const cv::Scalar HEAT_ONCE{ 220, 80, 20 };
+    const cv::Scalar HEAT_TWO_TO_THREE{ 255, 220, 0 };
+    const cv::Scalar HEAT_FOUR_TO_SEVEN{ 0, 200, 0 };
+    const cv::Scalar HEAT_EIGHT_TO_FIFTEEN{ 0, 230, 255 };
+    const cv::Scalar HEAT_SIXTEEN_TO_THIRTY_ONE{ 0, 120, 255 };
+    const cv::Scalar HEAT_THIRTY_TWO_OR_MORE{ 0, 0, 220 };
+    const cv::Scalar HEAT_OCCUPIED{ 0, 0, 0 };
 
     struct Configuration
     {
@@ -163,31 +173,47 @@ namespace
         return obstacles;
     }
 
+    std::string scientificValue(double value)
+    {
+        if (!std::isfinite(value))
+            return "none";
+        std::ostringstream stream;
+        stream << std::scientific << std::setprecision(6) << value;
+        return stream.str();
+    }
+
     cv::Mat3b renderExpansionHeatMap(
         const OccupancyGrid& grid,
         const GridSearchDetailedDiagnostics& diagnostics,
         int pixelsPerCell)
     {
-        cv::Mat1f logarithmicCounts;
-        diagnostics.expansionCounts.convertTo(logarithmicCounts, CV_32F);
-        cv::add(logarithmicCounts, cv::Scalar(1.0), logarithmicCounts);
-        cv::log(logarithmicCounts, logarithmicCounts);
-
-        cv::Mat1b intensity;
-        cv::normalize(
-            logarithmicCounts,
-            intensity,
-            0,
-            255,
-            cv::NORM_MINMAX,
-            CV_8U);
-
-        cv::Mat3b heatMap;
-        cv::applyColorMap(intensity, heatMap, cv::COLORMAP_TURBO);
-        cv::Mat1b neverExpanded;
-        cv::compare(diagnostics.expansionCounts, 0, neverExpanded, cv::CMP_EQ);
-        heatMap.setTo(cv::Scalar(255, 255, 255), neverExpanded);
-        heatMap.setTo(cv::Scalar(0, 0, 0), grid.imageView());
+        cv::Mat3b heatMap(
+            grid.height(),
+            grid.width(),
+            cv::Vec3b(
+                static_cast<std::uint8_t>(HEAT_NEVER[0]),
+                static_cast<std::uint8_t>(HEAT_NEVER[1]),
+                static_cast<std::uint8_t>(HEAT_NEVER[2])));
+        const auto paintRange = [&](int minimum, int maximum, const cv::Scalar& color)
+        {
+            cv::Mat1b mask;
+            cv::inRange(
+                diagnostics.expansionCounts,
+                cv::Scalar(minimum),
+                cv::Scalar(maximum),
+                mask);
+            heatMap.setTo(color, mask);
+        };
+        paintRange(1, 1, HEAT_ONCE);
+        paintRange(2, 3, HEAT_TWO_TO_THREE);
+        paintRange(4, 7, HEAT_FOUR_TO_SEVEN);
+        paintRange(8, 15, HEAT_EIGHT_TO_FIFTEEN);
+        paintRange(16, 31, HEAT_SIXTEEN_TO_THIRTY_ONE);
+        paintRange(
+            32,
+            std::numeric_limits<int>::max(),
+            HEAT_THIRTY_TWO_OR_MORE);
+        heatMap.setTo(HEAT_OCCUPIED, grid.imageView());
 
         cv::Mat3b display;
         cv::resize(
@@ -211,7 +237,7 @@ namespace
         double baselineMilliseconds)
     {
         constexpr int imageGap = 8;
-        constexpr int panelWidth = 360;
+        constexpr int panelWidth = 480;
         cv::Mat3b output(
             searchImage.rows,
             searchImage.cols + imageGap + expansionHeatMap.cols + panelWidth,
@@ -265,7 +291,15 @@ namespace
             text("Stale queue entries: " +
                 std::to_string(detailed.staleOpenSetEntries));
             text("Maximum cell expansions: " +
-                std::to_string(detailed.maximumExpansionsPerCell), 38);
+                std::to_string(detailed.maximumExpansionsPerCell));
+            text("Post-expanded improvements: " +
+                std::to_string(detailed.postExpansionCostImprovements));
+            text("Minimum improvement: " + scientificValue(
+                detailed.minimumPostExpansionCostImprovement));
+            text("Maximum improvement: " + scientificValue(
+                detailed.maximumPostExpansionCostImprovement));
+            text("Maximum relative improvement: " + scientificValue(
+                detailed.maximumRelativePostExpansionCostImprovement), 38);
         }
         text("Color key", 30);
 
@@ -291,18 +325,31 @@ namespace
         legendEntry(colors.goalColor, "Goal marker");
 
         y += 12;
-        text("Expansion heat map uses log scale", 24);
-        cv::Mat1b colorRamp(1, 256);
-        for (int column = 0; column < colorRamp.cols; ++column)
-            colorRamp(0, column) = static_cast<std::uint8_t>(column);
-        cv::Mat3b coloredRamp;
-        cv::applyColorMap(colorRamp, coloredRamp, cv::COLORMAP_TURBO);
-        cv::resize(coloredRamp, coloredRamp, cv::Size(256, 18),
-            0.0, 0.0, cv::INTER_NEAREST);
-        coloredRamp.copyTo(output(cv::Rect(left, y, 256, 18)));
-        y += 38;
-        text("low expansion count        high", 24);
-        text("white: never expanded; black: occupied");
+        text("Fixed expansion-count colors", 26);
+        const auto countLegendEntry = [&output](
+            int x, int entryY, const cv::Scalar& color, const char* label)
+        {
+            cv::rectangle(
+                output,
+                cv::Rect(x, entryY - 14, 18, 18),
+                color,
+                cv::FILLED);
+            cv::putText(output, label, { x + 25, entryY },
+                cv::FONT_HERSHEY_SIMPLEX, 0.45,
+                cv::Scalar(30, 30, 30), 1, cv::LINE_AA);
+        };
+        const int secondColumn = left + 170;
+        countLegendEntry(left, y, HEAT_NEVER, "0: never");
+        countLegendEntry(secondColumn, y, HEAT_ONCE, "1");
+        y += 27;
+        countLegendEntry(left, y, HEAT_TWO_TO_THREE, "2-3");
+        countLegendEntry(secondColumn, y, HEAT_FOUR_TO_SEVEN, "4-7");
+        y += 27;
+        countLegendEntry(left, y, HEAT_EIGHT_TO_FIFTEEN, "8-15");
+        countLegendEntry(secondColumn, y, HEAT_SIXTEEN_TO_THIRTY_ONE, "16-31");
+        y += 27;
+        countLegendEntry(left, y, HEAT_THIRTY_TWO_OR_MORE, "32+");
+        countLegendEntry(secondColumn, y, HEAT_OCCUPIED, "occupied");
         return output;
     }
 }
@@ -433,6 +480,18 @@ int main(int argc, char** argv)
                   << visualized.detailedDiagnostics->staleOpenSetEntries << '\n'
                   << "Maximum expansions of one cell: "
                   << visualized.detailedDiagnostics->maximumExpansionsPerCell << '\n'
+                  << "Post-expansion cost improvements: "
+                  << visualized.detailedDiagnostics->postExpansionCostImprovements
+                  << '\n'
+                  << "Minimum post-expansion improvement: "
+                  << scientificValue(visualized.detailedDiagnostics->
+                        minimumPostExpansionCostImprovement) << '\n'
+                  << "Maximum post-expansion improvement: "
+                  << scientificValue(visualized.detailedDiagnostics->
+                        maximumPostExpansionCostImprovement) << '\n'
+                  << "Maximum relative post-expansion improvement: "
+                  << scientificValue(visualized.detailedDiagnostics->
+                        maximumRelativePostExpansionCostImprovement) << '\n'
                   << "Debug callbacks: " << callbackCount << '\n'
                   << "Saved debug image: " << configuration.outputPath << '\n';
 

@@ -1286,6 +1286,13 @@ namespace
         require(detailed.repeatedExpansions > 0 &&
                 detailed.maximumExpansionsPerCell > 1,
             "weighted alternating-barrier search should expose repeated expansions");
+        require(detailed.postExpansionCostImprovements > 0 &&
+                std::isfinite(detailed.minimumPostExpansionCostImprovement) &&
+                detailed.minimumPostExpansionCostImprovement > 0.0 &&
+                detailed.maximumPostExpansionCostImprovement >=
+                    detailed.minimumPostExpansionCostImprovement &&
+                detailed.maximumRelativePostExpansionCostImprovement > 0.0,
+            "detailed diagnostics should measure improvements to expanded cells");
     }
 
     void aStarRoutesAroundObstacle()
