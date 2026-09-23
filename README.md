@@ -250,6 +250,59 @@ Or use CTest:
 ctest --test-dir build -C Release --output-on-failure
 ```
 
+## Performance benchmark
+
+`a_star_planner_benchmark` measures the complete non-visual planning pipeline
+without changing the planner implementation. It separately times environment
+validation and clipping, OpenCV rasterization, full-map ROI creation, one-cell
+safety inflation, terminal conversion, graph search, path conversion, and the
+corresponding preparation and per-request totals. Search results also include
+expanded nodes, generated nodes, peak open-set size, path size, and path cost.
+
+The default deterministic suite runs open, alternating-barrier, and unreachable
+scenarios at `100 x 100`, `250 x 250`, `500 x 500`, and `1000 x 1000` cells.
+At the benchmark's 25-meter resolution these represent square maps from 2.5 km
+through 25 km per side; a `1000 x 1000` grid contains one million cells. A*
+Dijkstra, and weighted A* with weight 1.5 are run on every case. Each measurement
+has one untimed warm-up, followed by a size-dependent number of repetitions.
+
+Run a Release build for meaningful results:
+
+```powershell
+cmake --build build --config Release --target a_star_planner_benchmark
+.\build\Release\a_star_planner_benchmark.exe
+```
+
+The executable prints a compact terminal summary and writes a timestamped CSV
+file in the working directory. Use `--csv <file>` to select its location,
+`--quick` for a short `100 x 100` smoke run, or `--stress` to add a
+`2000 x 2000` four-million-cell case. The CSV files are ignored by Git by
+default. Benchmark timings should be compared only between similar Release
+builds on the same machine under similar system load.
+
+### Isolated search visualization
+
+`a_star_search_debug` recreates the benchmark's `500 x 500`
+alternating-barrier scenario for one selected algorithm. It first performs an
+uninstrumented search for a meaningful baseline time, then repeats the search
+with the debug callback enabled. Sampled search frames are animated in an
+OpenCV window, and the final state is saved as a PNG with its color key and
+search diagnostics embedded beside the map.
+
+```powershell
+.\build\Release\a_star_search_debug.exe --algorithm astar
+.\build\Release\a_star_search_debug.exe --algorithm dijkstra
+.\build\Release\a_star_search_debug.exe --algorithm weighted --weight 1.5
+```
+
+The default files are `astar_search_debug_astar.png`,
+`astar_search_debug_dijkstra.png`, and
+`astar_search_debug_weighted_astar.png`. Use `--output <file>` to change the
+name, `--frame-stride <count>` to control animation sampling,
+`--no-animation` to display only the completed search, or `--no-display` to
+save the image without opening a window. Debug callback and rendering time are
+deliberately excluded from the reported baseline planning time.
+
 ## Tutorial demos
 
 The annotated demos are executable tutorials for the complete planning workflow:
@@ -350,6 +403,8 @@ A* path: 165 cells
 - `AStarPlanner::astar_occupancy_grid_visualization` — reusable OpenCV grid rendering
 - `AStarPlanner::astar_planner_visualization` — optional planner and grid visualization support
 - `a_star_planner_tests` — deterministic environment, grid, rasterization, and planner tests
+- `a_star_planner_benchmark` — deterministic terminal and CSV performance benchmark
+- `a_star_search_debug` — isolated visual comparison of benchmark search modes
 - `a_star_planner_demo` — unconstrained-environment demo
 - `operation_area_demo` — operation-area and clipping demo
 

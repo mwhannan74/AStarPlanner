@@ -38,7 +38,7 @@ option(ASTAR_PLANNER_BUILD_DEMO "Build the demo executables." ON)
 option(ASTAR_PLANNER_ENABLE_VISUALIZATION "Enable visualization support via MatPlotOpenCV." ON)
 
 if(ASTAR_PLANNER_ENABLE_VISUALIZATION)
-    find_package(OpenCV 4.5 REQUIRED COMPONENTS core highgui imgproc)
+    find_package(OpenCV 4.5 REQUIRED COMPONENTS core highgui imgcodecs imgproc)
 
     add_subdirectory(
         "${ASTAR_PLANNER_MPOCV_SOURCE_DIR}"
@@ -91,6 +91,32 @@ if(ASTAR_PLANNER_BUILD_DEMO)
         PRIVATE
             AStarPlanner::astar_planner_visualization
     )
+endif()
+
+# ---------- Benchmark executable --------------------------------------------
+option(ASTAR_PLANNER_BUILD_BENCHMARKS "Build the benchmark executable." ON)
+
+if(ASTAR_PLANNER_BUILD_BENCHMARKS)
+    add_executable(a_star_planner_benchmark
+        benchmark/a_star_planner_benchmark.cpp
+    )
+
+    target_link_libraries(a_star_planner_benchmark
+        PRIVATE
+            AStarPlanner::astar_planner
+    )
+
+    if(ASTAR_PLANNER_ENABLE_VISUALIZATION)
+        add_executable(a_star_search_debug
+            benchmark/a_star_search_debug.cpp
+        )
+
+        target_link_libraries(a_star_search_debug
+            PRIVATE
+                AStarPlanner::astar_occupancy_grid_visualization
+                opencv_imgcodecs
+        )
+    endif()
 endif()
 
 # ---------- Tests -------------------------------------------------------------
