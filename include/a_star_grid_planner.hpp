@@ -505,11 +505,9 @@ namespace astar
                 return true;
             constexpr double relativeTolerance =
                 8.0 * std::numeric_limits<double>::epsilon();
-            const double scale = std::max({
-                1.0,
-                std::abs(candidateCost),
-                std::abs(recordedCost)
-            });
+            // Grid path costs are nonnegative, and the caller has already
+            // established candidateCost < recordedCost.
+            const double scale = std::max(1.0, recordedCost);
             return recordedCost - candidateCost > relativeTolerance * scale;
         }
 
