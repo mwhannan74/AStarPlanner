@@ -25,6 +25,8 @@ reusable environment model, occupancy grid, and working A* planner. It supports:
 - eight-connected A* search with optional four-connected movement
 - Dijkstra search through the same planning interface
 - weighted A* with a configurable heuristic weight
+- configurable deterministic tie-breaking for equal-priority A* candidates
+- an indexed binary-heap open set with one live entry per grid cell
 - unit orthogonal and `sqrt(2)` diagonal costs with matching heuristics
 - optional diagonal corner cutting, disabled by default
 - path cost and search-work diagnostics for every planning request
@@ -127,28 +129,60 @@ options.heuristicWeight = 2.0;
 `heuristicWeight` is used only in weighted-A* mode. Dijkstra always selects an
 effective weight of `0`, and normal A* always selects `1`. The selected mode does
 not alter neighbor generation, collision checking, movement costs, parent
-tracking, path reconstruction, or diagnostics. Equal-cost candidates use a
-deterministic straight-line-deviation tie-breaker.
+tracking, path reconstruction, or diagnostics. `tieBreakPolicy` controls the
+deterministic ordering of candidates whose `g + weight * h` priorities are
+exactly equal. It does not change movement costs or the heuristic weight.
 `gridSearchAlgorithmName()` provides a readable name for the selected mode.
+
+### Tie-breaking policies
+
+Tie-breaking can materially change how much of an equal-priority frontier is
+processed and which of several equal-cost paths is returned. It does not change
+the optimality guarantee of normal A*. Weighted A* can already return a
+non-optimal path because of its heuristic weight, independently of tie-breaking.
+
+| Policy | Behavior | When to use it |
+|---|---|---|
+| `StraightLineThenLargerG` | Prefers cells nearest the straight start-to-goal line, then greater `g`. | Default and compatibility choice. It commonly produces visually direct paths and performs well on open maps. |
+| `LargerGThenStraightLine` | Prefers greater `g`, then uses straight-line deviation. | Try on large maps with broad equal-priority frontiers when retaining a geometric secondary preference is useful. |
+| `LargerGOnly` | Prefers greater `g`, then uses cell index only for deterministic ordering. It avoids calculating line deviation. | Simplest larger-`g` experiment. Use when benchmarks of representative maps show a benefit and geometric path preference is unimportant. |
+
+For Dijkstra, `f = g`, so candidates with equal priority also have equal `g`.
+Consequently, a larger-`g` primary tie-break cannot distinguish them; only a
+secondary key can change their ordering. Tie-breaking is primarily an A* and
+weighted-A* tuning option.
+
+```cpp
+AStarOptions options;
+options.tieBreakPolicy = AStarTieBreakPolicy::LargerGOnly;
+```
+
+The larger-`g` policies reduced expansions and peak frontier size on the
+included large alternating-barrier profile, but were neutral or slightly slower
+on some smaller cases. There is no universally fastest policy, so the original
+straight-line-first behavior remains the default. Benchmark the intended map
+families before changing an application default.
 
 Grid costs are accumulated in floating point because diagonal moves cost
 `sqrt(2)`. Relaxation uses a scale-aware tolerance of eight machine epsilons so
 that differently ordered sums of mathematically equivalent steps do not create
-replacement queue entries or cell re-expansions. Cost improvements larger than
-that numerical tolerance are processed normally.
+spurious decrease-key updates or cell re-expansions. Cost improvements larger
+than that numerical tolerance are processed normally.
 
 Every `GridPlanResult` includes `GridPlanDiagnostics`. Successful searches
 report the final movement cost; unsuccessful searches use infinite path cost.
-`expandedNodes` counts non-stale open-set entries processed, including the goal.
-`generatedNodes` counts entries inserted into the open set, including the start
-and any improved replacement entries. `peakOpenSetSize` records the largest
-number of queued entries. Invalid terminals return zero work counts because no
-search is started.
+`expandedNodes` counts open-set entries processed, including the goal.
+`generatedNodes` counts new open-set insertions and accepted decrease-key
+updates, including the start. The indexed binary heap holds at most one live
+entry per cell, and `peakOpenSetSize` records the largest live open set. Invalid
+terminals return zero work counts because no search is started.
 
 Set `AStarOptions::collectDetailedDiagnostics` only when investigating search
 behavior. The resulting `GridPlanResult::detailedDiagnostics` contains an
 OpenCV-oriented per-cell expansion-count image plus unique-expansion,
-re-expansion, stale-queue-entry, and maximum-per-cell counters. It also measures
+re-expansion, defensive stale-open-entry, and maximum-per-cell counters. The
+indexed heap normally keeps the stale-entry count at zero because it stores at
+most one live entry per cell. Detailed diagnostics also measure
 the count and minimum, maximum, and maximum-relative magnitude of accepted
 lower-cost updates to cells that were already expanded. Collection is disabled
 by default because it allocates an integer matrix and updates it during search.
@@ -292,8 +326,11 @@ The executable prints a compact terminal summary and writes a timestamped CSV
 file in the working directory. Use `--csv <file>` to select its location,
 `--quick` for a short `100 x 100` smoke run, or `--stress` to add a
 `2000 x 2000` four-million-cell case. The CSV files are ignored by Git by
-default. Benchmark timings should be compared only between similar Release
-builds on the same machine under similar system load.
+default. Use `--tie-break straight-line`, `--tie-break larger-g-then-line`, or
+`--tie-break larger-g` to apply that policy to the A* and weighted-A* rows;
+Dijkstra remains a stable baseline. The selected policy is recorded in the CSV.
+Benchmark timings should be compared only between similar Release builds on the
+same machine under similar system load.
 
 ### Isolated CPU profiling workload
 
@@ -311,8 +348,12 @@ For Visual Studio profiling, build the `x64-Release` CMake configuration
 out\build\x64-Release\a_star_planner_profile.exe
 ```
 
-Use `--iterations <count>` to change the profiling duration. The grid setup and
-untimed warm-up occur before the repeated workload.
+Use `--iterations <count>` to change the profiling duration. Select a policy
+with `--tie-break straight-line`, `--tie-break larger-g-then-line`, or
+`--tie-break larger-g`. The grid setup and untimed warm-up occur before the
+repeated workload. This executable is the most direct comparison of tie-break
+policies on the difficult barrier case; use the full benchmark to check that a
+choice also behaves well on open and unreachable maps.
 
 ### Isolated search visualization
 
@@ -346,7 +387,7 @@ deliberately excluded from the reported baseline planning time.
 The annotated demos are executable tutorials for the complete planning workflow:
 
 - [`a_star_planner_demo.cpp`](demo/a_star_planner_demo.cpp) starts with obstacle
-  polygons, explicitly sizes a master grid, runs weighted A* on the full grid,
+  polygons, explicitly sizes a master grid, runs A* on the full grid,
   and renders the result. Its pseudo-random obstacle field uses a fixed seed so
   runs are repeatable.
 - [`operation_area_demo.cpp`](demo/operation_area_demo.cpp) adds an operation
@@ -368,8 +409,8 @@ occupancy grid, terminals, and resulting A* path.
 The first demo builds an explicit world-aligned rectangular grid around a
 nonuniform field of polygon obstacles. The second builds a master grid directly
 from the operation area's bounding box, paints that area free, and then paints
-the effective obstacles occupied. The first demo runs weighted A* on its
-complete master grid. The second runs Dijkstra on a caller-selected ROI that
+the effective obstacles occupied. The first demo runs A* on its complete master
+grid. The second also runs A*, but on a caller-selected ROI that
 deliberately retains the space needed to route around its obstacle walls. Both
 demos report
 grid-rasterization, safety-inflation, and planning time and display the path in
@@ -399,7 +440,8 @@ Master occupancy grid: 69 x 75 cells at 1 world units per cell
 Planning grid (full master map): 69 x 75 cells with 1 world units of safety inflation
 Grid rasterization: 0.036 ms
 Safety inflation: 0.051 ms
-Weighted A* (weight 2.000) planning: 0.062 ms
+A* planning: 0.062 ms
+Tie-break: straight-line then larger g
 Expanded nodes: 162
 Generated nodes: 431
 Peak open-set size: 255
@@ -422,7 +464,8 @@ Master occupancy grid: 100 x 60 cells at 1 world units per cell
 Planning ROI (caller-selected): 94 x 60 cells, master offset (3, 0) with 1 world units of safety inflation
 Grid rasterization: 0.031 ms
 Safety inflation: 0.051 ms
-Dijkstra planning: 0.195 ms
+A* planning: 0.195 ms
+Tie-break: straight-line then larger g
 Expanded nodes: 3082
 Generated nodes: 3186
 Peak open-set size: 60
@@ -510,6 +553,8 @@ int main()
     // Weighted A*:
     // options.algorithm = GridSearchAlgorithm::WeightedAStar;
     // options.heuristicWeight = 2.0;
+    // Optional search-order tuning for equal-priority candidates:
+    // options.tieBreakPolicy = AStarTieBreakPolicy::LargerGOnly;
     const AStarGridPlanner planner;
     const GridPlanResult result = planner.plan(
         planningGrid, *start, *goal, options);

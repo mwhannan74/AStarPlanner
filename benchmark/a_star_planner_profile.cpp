@@ -29,6 +29,13 @@ namespace
     constexpr double CELL_RESOLUTION_METERS = 25.0;
     constexpr double SAFETY_RADIUS_METERS = CELL_RESOLUTION_METERS;
 
+    struct ProfileConfiguration
+    {
+        int iterations = DEFAULT_ITERATIONS;
+        AStarTieBreakPolicy tieBreakPolicy =
+            AStarTieBreakPolicy::StraightLineThenLargerG;
+    };
+
     Polygon rectangle(
         double minimumX,
         double minimumY,
@@ -76,9 +83,21 @@ namespace
             SAFETY_RADIUS_METERS);
     }
 
-    int parseIterations(int argc, char** argv)
+    AStarTieBreakPolicy parseTieBreakPolicy(const std::string& value)
     {
-        int iterations = DEFAULT_ITERATIONS;
+        if (value == "straight-line")
+            return AStarTieBreakPolicy::StraightLineThenLargerG;
+        if (value == "larger-g-then-line")
+            return AStarTieBreakPolicy::LargerGThenStraightLine;
+        if (value == "larger-g")
+            return AStarTieBreakPolicy::LargerGOnly;
+        throw std::invalid_argument(
+            "--tie-break must be straight-line, larger-g-then-line, or larger-g");
+    }
+
+    ProfileConfiguration parseArguments(int argc, char** argv)
+    {
+        ProfileConfiguration configuration;
         for (int index = 1; index < argc; ++index)
         {
             const std::string argument = argv[index];
@@ -94,14 +113,21 @@ namespace
                     throw std::invalid_argument(
                         "--iterations must be a positive integer");
                 }
-                iterations = static_cast<int>(parsed);
+                configuration.iterations = static_cast<int>(parsed);
+            }
+            else if (argument == "--tie-break" && index + 1 < argc)
+            {
+                configuration.tieBreakPolicy = parseTieBreakPolicy(argv[++index]);
             }
             else if (argument == "--help")
             {
                 std::cout
-                    << "Usage: a_star_planner_profile [--iterations COUNT]\n"
+                    << "Usage: a_star_planner_profile [--iterations COUNT]"
+                       " [--tie-break POLICY]\n"
                     << "Runs only A* on the 1000 x 1000 alternating-barrier "
-                       "scenario.\n";
+                       "scenario.\n"
+                    << "Tie-break policies: straight-line, larger-g-then-line,"
+                       " larger-g. The default is straight-line.\n";
                 std::exit(0);
             }
             else
@@ -110,7 +136,7 @@ namespace
                     "unknown or incomplete argument: " + argument);
             }
         }
-        return iterations;
+        return configuration;
     }
 }
 
@@ -118,7 +144,7 @@ int main(int argc, char** argv)
 {
     try
     {
-        const int iterations = parseIterations(argc, argv);
+        const ProfileConfiguration configuration = parseArguments(argc, argv);
         const OccupancyGrid grid = makeAlternatingBarrierGrid();
         const double extent =
             static_cast<double>(GRID_SIZE) * CELL_RESOLUTION_METERS;
@@ -135,6 +161,7 @@ int main(int argc, char** argv)
         options.algorithm = GridSearchAlgorithm::AStar;
         options.connectivity = GridConnectivity::EightConnected;
         options.preventDiagonalCornerCutting = true;
+        options.tieBreakPolicy = configuration.tieBreakPolicy;
 
         const AStarGridPlanner planner;
         const GridPlanResult expected = planner.plan(grid, *start, *goal, options);
@@ -147,7 +174,7 @@ int main(int argc, char** argv)
 
         std::size_t resultChecksum = 0;
         const auto startTime = Clock::now();
-        for (int iteration = 0; iteration < iterations; ++iteration)
+        for (int iteration = 0; iteration < configuration.iterations; ++iteration)
         {
             const GridPlanResult result = planner.plan(grid, *start, *goal, options);
             if (result.status != expected.status ||
@@ -175,11 +202,15 @@ int main(int argc, char** argv)
             << "Scenario: " << GRID_SIZE << " x " << GRID_SIZE
             << " alternating barriers\n"
             << "Algorithm: A*\n"
-            << "Iterations: " << iterations << " after one warm-up\n"
+            << "Tie-break: "
+            << aStarTieBreakPolicyName(configuration.tieBreakPolicy) << '\n'
+            << "Iterations: " << configuration.iterations
+            << " after one warm-up\n"
             << std::fixed << std::setprecision(3)
             << "Total planning time: " << totalMilliseconds << " ms\n"
             << "Mean planning time: "
-            << totalMilliseconds / static_cast<double>(iterations) << " ms\n"
+            << totalMilliseconds /
+                static_cast<double>(configuration.iterations) << " ms\n"
             << "Expanded nodes per plan: "
             << expected.diagnostics.expandedNodes << '\n'
             << "Generated nodes per plan: "

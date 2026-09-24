@@ -138,16 +138,17 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // 7. Run weighted A*. A larger heuristic weight can reduce search effort at
-    // the cost of path optimality. The operation-area demo uses Dijkstra, while
-    // leaving algorithm at its default would select normal A*. All three modes
-    // share this planner and use eight-connected movement here.
+    // 7. Run A*. Dijkstra and weighted A* use the same planner and can be selected
+    // below. Tie-breaking only orders equal-priority candidates; larger-g-first
+    // policies can help some difficult maps but should be benchmarked for the
+    // intended workload.
     const AStarGridPlanner gridPlanner;
     AStarOptions options;
     //options.algorithm = GridSearchAlgorithm::Dijkstra;
     options.algorithm = GridSearchAlgorithm::AStar;
     //options.algorithm = GridSearchAlgorithm::WeightedAStar;
     options.heuristicWeight = 2.0; // only used by WeightedAStar
+    //options.tieBreakPolicy = AStarTieBreakPolicy::LargerGOnly;
 
     GridSearchDebugCallback debugCallback;
     if (debugVisualizationEnabled)
@@ -184,11 +185,15 @@ int main(int argc, char* argv[])
     const GridPlanResult plan = gridPlanner.plan(
         planningGrid, *startCell, *goalCell, options, debugCallback);
     const auto planningElapsed = Clock::now() - planningStartTime;
-    std::cout << gridSearchAlgorithmName(options.algorithm)
-              << " (weight " << options.heuristicWeight << ") planning: "
+    std::cout << gridSearchAlgorithmName(options.algorithm);
+    if (options.algorithm == GridSearchAlgorithm::WeightedAStar)
+        std::cout << " (weight " << options.heuristicWeight << ')';
+    std::cout << " planning: "
               << std::chrono::duration<double, std::milli>(planningElapsed).count()
               << " ms"
               << (debugVisualizationEnabled ? " including debug display\n" : "\n")
+              << "Tie-break: "
+              << aStarTieBreakPolicyName(options.tieBreakPolicy) << '\n'
               << "Expanded nodes: " << plan.diagnostics.expandedNodes << '\n'
               << "Generated nodes: " << plan.diagnostics.generatedNodes << '\n'
               << "Peak open-set size: " << plan.diagnostics.peakOpenSetSize << '\n';

@@ -78,6 +78,8 @@ namespace
         bool quick = false;
         bool stress = false;
         std::string csvPath;
+        AStarTieBreakPolicy tieBreakPolicy =
+            AStarTieBreakPolicy::StraightLineThenLargerG;
     };
 
     double elapsedMilliseconds(Clock::time_point start, Clock::time_point end)
@@ -277,6 +279,18 @@ namespace
         return "unknown";
     }
 
+    AStarTieBreakPolicy parseTieBreakPolicy(const std::string& value)
+    {
+        if (value == "straight-line")
+            return AStarTieBreakPolicy::StraightLineThenLargerG;
+        if (value == "larger-g-then-line")
+            return AStarTieBreakPolicy::LargerGThenStraightLine;
+        if (value == "larger-g")
+            return AStarTieBreakPolicy::LargerGOnly;
+        throw std::invalid_argument(
+            "--tie-break must be straight-line, larger-g-then-line, or larger-g");
+    }
+
     std::string timestampText(const char* format)
     {
         const std::time_t now = std::time(nullptr);
@@ -317,14 +331,18 @@ namespace
                 configuration.stress = true;
             else if (argument == "--csv" && index + 1 < argc)
                 configuration.csvPath = argv[++index];
+            else if (argument == "--tie-break" && index + 1 < argc)
+                configuration.tieBreakPolicy = parseTieBreakPolicy(argv[++index]);
             else if (argument == "--help")
             {
                 std::cout
                     << "Usage: a_star_planner_benchmark [--quick] [--stress]"
-                    << " [--csv FILE]\n"
+                    << " [--csv FILE] [--tie-break POLICY]\n"
                     << "  --quick   Run only the 100 x 100 smoke benchmark.\n"
                     << "  --stress  Add a 2000 x 2000 benchmark case.\n"
-                    << "  --csv     Select the output CSV path.\n";
+                    << "  --csv     Select the output CSV path.\n"
+                    << "  --tie-break  Select straight-line (default),"
+                       " larger-g-then-line, or larger-g for A* and weighted A*.\n";
                 std::exit(0);
             }
             else
@@ -359,7 +377,8 @@ namespace
     {
         csv
             << "timestamp,build_type,scenario,grid_width,grid_height,resolution_m,"
-            << "safety_radius_m,algorithm,heuristic_weight,preparation_repetitions,"
+            << "safety_radius_m,algorithm,heuristic_weight,tie_break_policy,"
+            << "preparation_repetitions,"
             << "search_repetitions,environment_median_ms,rasterization_median_ms,"
             << "roi_median_ms,inflation_median_ms,preparation_total_median_ms,"
             << "coordinate_conversion_median_ms,search_median_ms,search_p95_ms,"
@@ -384,6 +403,7 @@ namespace
             << (options.algorithm == GridSearchAlgorithm::WeightedAStar
                     ? options.heuristicWeight :
                     options.algorithm == GridSearchAlgorithm::AStar ? 1.0 : 0.0)
+            << ',' << aStarTieBreakPolicyName(options.tieBreakPolicy)
             << ',' << size.preparationRepetitions << ',' << size.searchRepetitions << ','
             << median(preparation.environment) << ','
             << median(preparation.rasterization) << ','
@@ -417,12 +437,14 @@ int main(int argc, char** argv)
         std::cout << "AStarPlanner benchmark (" << buildType() << ")\n"
                   << "Resolution: " << CELL_RESOLUTION_METERS
                   << " m/cell; safety radius: " << SAFETY_RADIUS_METERS << " m\n"
+                  << "A*/weighted tie-break: "
+                  << aStarTieBreakPolicyName(configuration.tieBreakPolicy) << '\n'
                   << "Times are medians after one warm-up; search p95 is also reported.\n";
 #if !defined(NDEBUG)
         std::cout << "WARNING: Debug builds are not representative of planner performance.\n";
 #endif
 
-        const std::vector<AStarOptions> algorithms{
+        std::vector<AStarOptions> algorithms{
             AStarOptions{ GridSearchAlgorithm::AStar, 1.0,
                 GridConnectivity::EightConnected, true },
             AStarOptions{ GridSearchAlgorithm::Dijkstra, 1.0,
@@ -430,6 +452,8 @@ int main(int argc, char** argv)
             AStarOptions{ GridSearchAlgorithm::WeightedAStar, WEIGHTED_ASTAR_WEIGHT,
                 GridConnectivity::EightConnected, true }
         };
+        algorithms[0].tieBreakPolicy = configuration.tieBreakPolicy;
+        algorithms[2].tieBreakPolicy = configuration.tieBreakPolicy;
         const std::vector<ScenarioKind> scenarioKinds{
             ScenarioKind::Open,
             ScenarioKind::AlternatingBarriers,

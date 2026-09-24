@@ -152,14 +152,14 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // 7. Plan inside the selected ROI. This demo selects Dijkstra; choosing
-    // GridSearchAlgorithm::AStar would use the connectivity-matched heuristic.
-    // NoPath only means that no route exists inside this ROI, not necessarily
-    // inside the complete master grid.
+    // 7. Plan with normal A* inside the selected ROI. Dijkstra and weighted A*
+    // can be selected through the same options. NoPath only means that no route
+    // exists inside this ROI, not necessarily inside the complete master grid.
     const AStarGridPlanner gridPlanner;
     AStarOptions options;
     //options.algorithm = GridSearchAlgorithm::Dijkstra;
     options.algorithm = GridSearchAlgorithm::AStar;
+    //options.tieBreakPolicy = AStarTieBreakPolicy::LargerGOnly;
 
     GridSearchDebugCallback debugCallback;
     if (debugVisualizationEnabled)
@@ -200,6 +200,8 @@ int main(int argc, char* argv[])
               << std::chrono::duration<double, std::milli>(planningElapsed).count()
               << " ms"
               << (debugVisualizationEnabled ? " including debug display\n" : "\n")
+              << "Tie-break: "
+              << aStarTieBreakPolicyName(options.tieBreakPolicy) << '\n'
               << "Expanded nodes: " << plan.diagnostics.expandedNodes << '\n'
               << "Generated nodes: " << plan.diagnostics.generatedNodes << '\n'
               << "Peak open-set size: " << plan.diagnostics.peakOpenSetSize << '\n';

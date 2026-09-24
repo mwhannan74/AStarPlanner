@@ -14,7 +14,6 @@
 #include <functional>
 #include <limits>
 #include <optional>
-#include <queue>
 #include <utility>
 #include <vector>
 
@@ -80,6 +79,43 @@ namespace astar
         return "unknown grid search algorithm";
     }
 
+    enum class AStarTieBreakPolicy
+    {
+        /**
+         * Prefer the straight start-to-goal line, then greater cost from start.
+         * This is the compatibility default and often gives visually direct
+         * paths on open maps.
+         */
+        StraightLineThenLargerG,
+        /**
+         * Prefer greater cost from start, then the straight start-to-goal line.
+         * This can reduce the active frontier on large equal-priority plateaus
+         * while retaining a geometric secondary preference.
+         */
+        LargerGThenStraightLine,
+        /**
+         * Prefer greater cost from start without computing a geometric key.
+         * Use this when profiling shows larger-g-first ordering helps and the
+         * straight-line secondary preference is not useful.
+         */
+        LargerGOnly
+    };
+
+    inline const char* aStarTieBreakPolicyName(
+        AStarTieBreakPolicy policy) noexcept
+    {
+        switch (policy)
+        {
+        case AStarTieBreakPolicy::StraightLineThenLargerG:
+            return "straight-line then larger g";
+        case AStarTieBreakPolicy::LargerGThenStraightLine:
+            return "larger g then straight-line";
+        case AStarTieBreakPolicy::LargerGOnly:
+            return "larger g only";
+        }
+        return "unknown A* tie-break policy";
+    }
+
     /** Controls the search algorithm and movement model. */
     struct AStarOptions
     {
@@ -91,6 +127,14 @@ namespace astar
         bool preventDiagonalCornerCutting = true;
         /** Records per-cell expansion counts for diagnostics at additional cost. */
         bool collectDetailedDiagnostics = false;
+        /**
+         * Orders nodes with exactly equal g + weight * h values. The policy can
+         * change search effort and the selected equal-cost path, but not normal
+         * A* optimality. The larger-g primary key is redundant for Dijkstra
+         * because its priority is g.
+         */
+        AStarTieBreakPolicy tieBreakPolicy =
+            AStarTieBreakPolicy::StraightLineThenLargerG;
     };
 
     /** Search measurements collected by a planning request. */
@@ -98,11 +142,11 @@ namespace astar
     {
         /** Final movement cost, or infinity when planning does not succeed. */
         double pathCost = std::numeric_limits<double>::infinity();
-        /** Non-stale open-set entries removed for processing, including the goal. */
+        /** Open-set entries removed for processing, including the goal. */
         std::size_t expandedNodes = 0;
-        /** Open-set entries inserted, including the start and replacement entries. */
+        /** Open-set insertions and priority decreases, including the start. */
         std::size_t generatedNodes = 0;
-        /** Largest number of entries held by the open set at one time. */
+        /** Largest number of live entries held by the open set at one time. */
         std::size_t peakOpenSetSize = 0;
     };
 
@@ -115,7 +159,10 @@ namespace astar
         std::size_t uniqueExpandedCells = 0;
         /** Expansion events after a cell's first expansion. */
         std::size_t repeatedExpansions = 0;
-        /** Queue entries discarded because a better cost was already recorded. */
+        /**
+         * Defensive count of inconsistent open-set entries. The indexed heap
+         * normally keeps this at zero because each cell has one live entry.
+         */
         std::size_t staleOpenSetEntries = 0;
         /** Largest expansion count recorded for one cell. */
         std::size_t maximumExpansionsPerCell = 0;
@@ -174,9 +221,10 @@ namespace astar
      * Orthogonal moves cost 1, diagonal moves cost sqrt(2), and the base heuristic
      * matches the configured connectivity. Diagonal moves cannot pass between
      * occupied orthogonal neighbors unless corner cutting is enabled. Returned
-     * paths include both terminal cells and use deterministic straight-line
-     * deviation as a tie-breaker between equal-cost candidates. Weighted A* may
-     * return a non-optimal path in exchange for reducing search effort.
+     * paths include both terminal cells. AStarOptions::tieBreakPolicy selects the
+     * deterministic ordering of candidates with equal priority; it can affect
+     * search effort and which equal-cost path is returned. Weighted A* may return
+     * a non-optimal path in exchange for reducing search effort.
      *
      * Supplying @p debugCallback enables a reusable single-channel state image
      * and synchronous callbacks after each accepted expansion and after the
@@ -186,7 +234,7 @@ namespace astar
      * allocation and tracking are disabled by default.
      *
      * @throws std::invalid_argument if options contain an unsupported search
-     * algorithm or connectivity value.
+     * algorithm, connectivity value, tie-break policy, or heuristic weight.
      */
     class AStarGridPlanner
     {
@@ -204,6 +252,15 @@ namespace astar
             {
                 throw std::invalid_argument(
                     "AStarGridPlanner: unsupported grid connectivity");
+            }
+            if (options.tieBreakPolicy !=
+                    AStarTieBreakPolicy::StraightLineThenLargerG &&
+                options.tieBreakPolicy !=
+                    AStarTieBreakPolicy::LargerGThenStraightLine &&
+                options.tieBreakPolicy != AStarTieBreakPolicy::LargerGOnly)
+            {
+                throw std::invalid_argument(
+                    "AStarGridPlanner: unsupported tie-break policy");
             }
 
             if (!grid.contains(start))
@@ -224,7 +281,7 @@ namespace astar
             const double unreachable = std::numeric_limits<double>::infinity();
             std::vector<double> costs(cellCount, unreachable);
             std::vector<std::size_t> parents(cellCount, NO_PARENT);
-            std::priority_queue<OpenNode, std::vector<OpenNode>, LowerCostFirst> open;
+            IndexedBinaryHeap open(cellCount, options.tieBreakPolicy);
             GridPlanDiagnostics diagnostics;
             std::optional<GridSearchDetailedDiagnostics> detailedDiagnostics;
             if (options.collectDetailedDiagnostics)
@@ -255,7 +312,7 @@ namespace astar
             };
 
             costs[startIndex] = 0;
-            open.push({
+            open.pushOrDecrease({
                 heuristicWeight * heuristic(start, goal, options.connectivity),
                 0.0,
                 0,
@@ -270,6 +327,8 @@ namespace astar
             {
                 const OpenNode current = open.top();
                 open.pop();
+                // This is a defensive invariant check. The indexed heap keeps
+                // only the current entry for each open cell.
                 if (current.costFromStart != costs[current.index])
                 {
                     if (detailedDiagnostics)
@@ -374,11 +433,13 @@ namespace astar
 
                     costs[neighborIndex] = candidateCost;
                     parents[neighborIndex] = current.index;
-                    open.push({
+                    open.pushOrDecrease({
                         candidateCost + heuristicWeight *
                             heuristic(neighbor, goal, options.connectivity),
                         candidateCost,
-                        lineDeviation(start, goal, neighbor),
+                        options.tieBreakPolicy == AStarTieBreakPolicy::LargerGOnly
+                            ? 0
+                            : lineDeviation(start, goal, neighbor),
                         neighborIndex
                     });
                     ++diagnostics.generatedNodes;
@@ -436,16 +497,134 @@ namespace astar
 
         struct LowerCostFirst
         {
+            AStarTieBreakPolicy tieBreakPolicy =
+                AStarTieBreakPolicy::StraightLineThenLargerG;
+
             bool operator()(const OpenNode& lhs, const OpenNode& rhs) const noexcept
             {
                 if (lhs.estimatedTotalCost != rhs.estimatedTotalCost)
                     return lhs.estimatedTotalCost > rhs.estimatedTotalCost;
-                if (lhs.lineDeviation != rhs.lineDeviation)
-                    return lhs.lineDeviation > rhs.lineDeviation;
-                if (lhs.costFromStart != rhs.costFromStart)
-                    return lhs.costFromStart < rhs.costFromStart;
+                if (tieBreakPolicy ==
+                    AStarTieBreakPolicy::StraightLineThenLargerG)
+                {
+                    if (lhs.lineDeviation != rhs.lineDeviation)
+                        return lhs.lineDeviation > rhs.lineDeviation;
+                    if (lhs.costFromStart != rhs.costFromStart)
+                        return lhs.costFromStart < rhs.costFromStart;
+                }
+                else
+                {
+                    if (lhs.costFromStart != rhs.costFromStart)
+                        return lhs.costFromStart < rhs.costFromStart;
+                    if (tieBreakPolicy ==
+                            AStarTieBreakPolicy::LargerGThenStraightLine &&
+                        lhs.lineDeviation != rhs.lineDeviation)
+                    {
+                        return lhs.lineDeviation > rhs.lineDeviation;
+                    }
+                }
                 return lhs.index > rhs.index;
             }
+        };
+
+        /** Binary min-heap with at most one live entry for each grid cell. */
+        class IndexedBinaryHeap
+        {
+        public:
+            IndexedBinaryHeap(
+                std::size_t cellCount,
+                AStarTieBreakPolicy tieBreakPolicy)
+                : _positions(cellCount, NOT_OPEN),
+                  _lowerCostFirst{ tieBreakPolicy }
+            {
+            }
+
+            bool empty() const noexcept { return _nodes.empty(); }
+            std::size_t size() const noexcept { return _nodes.size(); }
+            const OpenNode& top() const noexcept { return _nodes.front(); }
+
+            void pushOrDecrease(OpenNode node)
+            {
+                const std::size_t position = _positions[node.index];
+                if (position == NOT_OPEN)
+                {
+                    _nodes.push_back(std::move(node));
+                    const std::size_t insertedPosition = _nodes.size() - 1;
+                    _positions[_nodes[insertedPosition].index] = insertedPosition;
+                    siftUp(insertedPosition);
+                    return;
+                }
+
+                _nodes[position] = std::move(node);
+                siftUp(position);
+            }
+
+            void pop()
+            {
+                const std::size_t removedIndex = _nodes.front().index;
+                _positions[removedIndex] = NOT_OPEN;
+                if (_nodes.size() == 1)
+                {
+                    _nodes.pop_back();
+                    return;
+                }
+
+                OpenNode replacement = std::move(_nodes.back());
+                _nodes.pop_back();
+
+                std::size_t position = 0;
+                while (true)
+                {
+                    const std::size_t leftChild = 2 * position + 1;
+                    if (leftChild >= _nodes.size())
+                        break;
+                    const std::size_t rightChild = leftChild + 1;
+                    const std::size_t preferredChild =
+                        rightChild < _nodes.size() &&
+                        higherPriority(_nodes[rightChild], _nodes[leftChild])
+                            ? rightChild
+                            : leftChild;
+                    if (!higherPriority(_nodes[preferredChild], replacement))
+                        break;
+
+                    _nodes[position] = std::move(_nodes[preferredChild]);
+                    _positions[_nodes[position].index] = position;
+                    position = preferredChild;
+                }
+                _nodes[position] = std::move(replacement);
+                _positions[_nodes[position].index] = position;
+            }
+
+        private:
+            inline static constexpr std::size_t NOT_OPEN =
+                std::numeric_limits<std::size_t>::max();
+
+            bool higherPriority(
+                const OpenNode& first,
+                const OpenNode& second) const noexcept
+            {
+                return _lowerCostFirst(second, first);
+            }
+
+            void siftUp(std::size_t position)
+            {
+                OpenNode node = std::move(_nodes[position]);
+                while (position > 0)
+                {
+                    const std::size_t parent = (position - 1) / 2;
+                    if (!higherPriority(node, _nodes[parent]))
+                        break;
+                    _nodes[position] = std::move(_nodes[parent]);
+                    _positions[_nodes[position].index] = position;
+                    position = parent;
+                }
+                _nodes[position] = std::move(node);
+                _positions[_nodes[position].index] = position;
+            }
+
+            std::vector<OpenNode> _nodes;
+            std::vector<std::size_t> _positions;
+            LowerCostFirst _lowerCostFirst;
         };
 
         static std::size_t cellIndex(

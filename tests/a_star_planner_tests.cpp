@@ -26,6 +26,7 @@ namespace
 {
     using astar::AStarGridPlanner;
     using astar::AStarOptions;
+    using astar::AStarTieBreakPolicy;
     using astar::CellState;
     using astar::GridCell;
     using astar::GridGeometry;
@@ -43,6 +44,7 @@ namespace
     using astar::PolygonRasterizer;
     using astar::SubgridStorage;
     using astar::WorldBounds;
+    using astar::aStarTieBreakPolicyName;
     using astar::gridPathToWorld;
 
     constexpr double TEST_EPSILON = 1e-9;
@@ -1065,6 +1067,12 @@ namespace
             [&] { static_cast<void>(planner.plan(grid, { 0, 0 }, { 1, 1 }, options)); },
             "planner should reject an unsupported search algorithm");
 
+        options = AStarOptions{};
+        options.tieBreakPolicy = static_cast<AStarTieBreakPolicy>(99);
+        requireThrows<std::invalid_argument>(
+            [&] { static_cast<void>(planner.plan(grid, { 0, 0 }, { 1, 1 }, options)); },
+            "planner should reject an unsupported tie-break policy");
+
         options.algorithm = GridSearchAlgorithm::WeightedAStar;
         for (const double invalidWeight : {
                  -1.0,
@@ -1129,6 +1137,11 @@ namespace
             { GridConnectivity::EightConnected, false,
                 "eight-connected permissive" }
         };
+        constexpr std::array<AStarTieBreakPolicy, 3> tieBreakPolicies{
+            AStarTieBreakPolicy::StraightLineThenLargerG,
+            AStarTieBreakPolicy::LargerGThenStraightLine,
+            AStarTieBreakPolicy::LargerGOnly
+        };
 
         constexpr int randomMapCount = 200;
         std::mt19937 generator(0xA57A2026u);
@@ -1178,87 +1191,92 @@ namespace
 
             for (const SearchConfiguration& configuration : configurations)
             {
-                AStarOptions aStarOptions;
-                aStarOptions.algorithm = GridSearchAlgorithm::AStar;
-                aStarOptions.connectivity = configuration.connectivity;
-                aStarOptions.preventDiagonalCornerCutting =
-                    configuration.preventDiagonalCornerCutting;
-
-                AStarOptions dijkstraOptions = aStarOptions;
+                AStarOptions dijkstraOptions;
                 dijkstraOptions.algorithm = GridSearchAlgorithm::Dijkstra;
-
-                const GridPlanResult aStarResult = planner.plan(
-                    grid, start, goal, aStarOptions);
+                dijkstraOptions.connectivity = configuration.connectivity;
+                dijkstraOptions.preventDiagonalCornerCutting =
+                    configuration.preventDiagonalCornerCutting;
                 const GridPlanResult dijkstraResult = planner.plan(
                     grid, start, goal, dijkstraOptions);
 
-                std::ostringstream context;
-                context << "random map " << mapIndex << " ("
-                        << width << 'x' << height << ", "
-                        << configuration.name << ")";
-                require(
-                    aStarResult.succeeded() == dijkstraResult.succeeded(),
-                    "A* and Dijkstra should agree on reachability for " +
-                        context.str());
-
-                if (!aStarResult.succeeded())
+                for (AStarTieBreakPolicy tieBreakPolicy : tieBreakPolicies)
                 {
-                    ++noPathComparisons;
+                    AStarOptions aStarOptions = dijkstraOptions;
+                    aStarOptions.algorithm = GridSearchAlgorithm::AStar;
+                    aStarOptions.tieBreakPolicy = tieBreakPolicy;
+                    const GridPlanResult aStarResult = planner.plan(
+                        grid, start, goal, aStarOptions);
+
+                    std::ostringstream context;
+                    context << "random map " << mapIndex << " ("
+                            << width << 'x' << height << ", "
+                            << configuration.name << ", "
+                            << aStarTieBreakPolicyName(tieBreakPolicy) << ")";
                     require(
-                        aStarResult.status == GridPlanStatus::NoPath &&
-                        dijkstraResult.status == GridPlanStatus::NoPath &&
-                        aStarResult.path.empty() &&
-                        dijkstraResult.path.empty() &&
-                        std::isinf(aStarResult.diagnostics.pathCost) &&
-                        std::isinf(dijkstraResult.diagnostics.pathCost),
-                        "unreachable searches should return consistent failures for " +
+                        aStarResult.succeeded() == dijkstraResult.succeeded(),
+                        "A* and Dijkstra should agree on reachability for " +
                             context.str());
-                    continue;
-                }
 
-                ++successfulComparisons;
-                if (configuration.connectivity == GridConnectivity::FourConnected)
-                {
-                    requireValidFourConnectedPath(
-                        grid, aStarResult.path, start, goal);
-                    requireValidFourConnectedPath(
-                        grid, dijkstraResult.path, start, goal);
-                }
-                else
-                {
-                    requireValidEightConnectedPath(
-                        grid,
-                        aStarResult.path,
-                        start,
-                        goal,
-                        configuration.preventDiagonalCornerCutting);
-                    requireValidEightConnectedPath(
-                        grid,
-                        dijkstraResult.path,
-                        start,
-                        goal,
-                        configuration.preventDiagonalCornerCutting);
-                }
+                    if (!aStarResult.succeeded())
+                    {
+                        ++noPathComparisons;
+                        require(
+                            aStarResult.status == GridPlanStatus::NoPath &&
+                            dijkstraResult.status == GridPlanStatus::NoPath &&
+                            aStarResult.path.empty() &&
+                            dijkstraResult.path.empty() &&
+                            std::isinf(aStarResult.diagnostics.pathCost) &&
+                            std::isinf(dijkstraResult.diagnostics.pathCost),
+                            "unreachable searches should return consistent failures for " +
+                                context.str());
+                        continue;
+                    }
 
-                const double measuredAStarCost =
-                    pathMovementCost(aStarResult.path);
-                const double measuredDijkstraCost =
-                    pathMovementCost(dijkstraResult.path);
-                require(
-                    costsNear(
-                        aStarResult.diagnostics.pathCost,
-                        measuredAStarCost) &&
-                    costsNear(
-                        dijkstraResult.diagnostics.pathCost,
-                        measuredDijkstraCost),
-                    "reported costs should match reconstructed paths for " +
-                        context.str());
-                require(
-                    costsNear(
-                        aStarResult.diagnostics.pathCost,
-                        dijkstraResult.diagnostics.pathCost),
-                    "A* and Dijkstra should return the same optimal cost for " +
-                        context.str());
+                    ++successfulComparisons;
+                    if (configuration.connectivity ==
+                        GridConnectivity::FourConnected)
+                    {
+                        requireValidFourConnectedPath(
+                            grid, aStarResult.path, start, goal);
+                        requireValidFourConnectedPath(
+                            grid, dijkstraResult.path, start, goal);
+                    }
+                    else
+                    {
+                        requireValidEightConnectedPath(
+                            grid,
+                            aStarResult.path,
+                            start,
+                            goal,
+                            configuration.preventDiagonalCornerCutting);
+                        requireValidEightConnectedPath(
+                            grid,
+                            dijkstraResult.path,
+                            start,
+                            goal,
+                            configuration.preventDiagonalCornerCutting);
+                    }
+
+                    const double measuredAStarCost =
+                        pathMovementCost(aStarResult.path);
+                    const double measuredDijkstraCost =
+                        pathMovementCost(dijkstraResult.path);
+                    require(
+                        costsNear(
+                            aStarResult.diagnostics.pathCost,
+                            measuredAStarCost) &&
+                        costsNear(
+                            dijkstraResult.diagnostics.pathCost,
+                            measuredDijkstraCost),
+                        "reported costs should match reconstructed paths for " +
+                            context.str());
+                    require(
+                        costsNear(
+                            aStarResult.diagnostics.pathCost,
+                            dijkstraResult.diagnostics.pathCost),
+                        "A* and Dijkstra should return the same optimal cost for " +
+                            context.str());
+                }
             }
         }
 
@@ -1266,7 +1284,8 @@ namespace
             "randomized comparison should cover reachable and unreachable requests");
         require(
             successfulComparisons + noPathComparisons ==
-                static_cast<std::size_t>(randomMapCount) * configurations.size(),
+                static_cast<std::size_t>(randomMapCount) * configurations.size() *
+                    tieBreakPolicies.size(),
             "randomized comparison should execute every configured request");
     }
 
@@ -1462,6 +1481,8 @@ namespace
             "requested detailed diagnostics should be present");
 
         const auto& detailed = *detailedResult.detailedDiagnostics;
+        require(detailed.staleOpenSetEntries == 0,
+            "the indexed open set should not produce stale queue entries");
         require(detailed.expansionCounts.rows == grid.height() &&
                 detailed.expansionCounts.cols == grid.width(),
             "expansion-count image dimensions should match the planning grid");
