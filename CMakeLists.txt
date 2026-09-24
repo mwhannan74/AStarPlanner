@@ -101,10 +101,26 @@ if(ASTAR_PLANNER_BUILD_BENCHMARKS)
         benchmark/a_star_planner_benchmark.cpp
     )
 
+    add_executable(a_star_planner_profile
+        benchmark/a_star_planner_profile.cpp
+    )
+
     target_link_libraries(a_star_planner_benchmark
         PRIVATE
             AStarPlanner::astar_planner
     )
+
+    target_link_libraries(a_star_planner_profile
+        PRIVATE
+            AStarPlanner::astar_planner
+    )
+
+    if(BUILD_TESTING)
+        add_test(
+            NAME a_star_planner_profile_smoke
+            COMMAND a_star_planner_profile --iterations 1
+        )
+    endif()
 
     if(ASTAR_PLANNER_ENABLE_VISUALIZATION)
         add_executable(a_star_search_debug

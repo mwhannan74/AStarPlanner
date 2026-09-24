@@ -5,3 +5,4 @@ build/
 astar_benchmark_*.csv
 astar_search_debug_*.png
 *.csv
+CMakeSettings.json

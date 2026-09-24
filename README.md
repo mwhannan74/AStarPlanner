@@ -295,6 +295,25 @@ file in the working directory. Use `--csv <file>` to select its location,
 default. Benchmark timings should be compared only between similar Release
 builds on the same machine under similar system load.
 
+### Isolated CPU profiling workload
+
+`a_star_planner_profile` isolates standard A* on the benchmark's difficult
+`1000 x 1000` alternating-barrier scenario. It constructs the planning grid
+once, performs one warm-up, and then runs only uninstrumented A* 50 times by
+default. Every result is checked against the warm-up result. There is no debug
+callback, visualization, CSV output, Dijkstra search, or weighted A* search to
+mix into a CPU profile.
+
+For Visual Studio profiling, build the `x64-Release` CMake configuration
+(`RelWithDebInfo`) and select this executable:
+
+```text
+out\build\x64-Release\a_star_planner_profile.exe
+```
+
+Use `--iterations <count>` to change the profiling duration. The grid setup and
+untimed warm-up occur before the repeated workload.
+
 ### Isolated search visualization
 
 `a_star_search_debug` recreates the benchmark's `500 x 500`
@@ -423,6 +442,7 @@ A* path: 165 cells
 - `AStarPlanner::astar_planner_visualization` — optional planner and grid visualization support
 - `a_star_planner_tests` — deterministic environment, grid, rasterization, and planner tests
 - `a_star_planner_benchmark` — deterministic terminal and CSV performance benchmark
+- `a_star_planner_profile` — isolated repeated A* workload for CPU profiling
 - `a_star_search_debug` — isolated visual comparison of benchmark search modes
 - `a_star_planner_demo` — unconstrained-environment demo
 - `operation_area_demo` — operation-area and clipping demo
