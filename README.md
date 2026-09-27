@@ -109,6 +109,7 @@ cmake --build build --config Release
 ```powershell
 .\build\Release\a_star_planner_demo.exe
 .\build\Release\operation_area_demo.exe
+.\build\Release\perception_fusion_demo.exe
 ```
 
 Add `--debug` to animate the search state while planning:
@@ -116,6 +117,7 @@ Add `--debug` to animate the search state while planning:
 ```powershell
 .\build\Release\a_star_planner_demo.exe --debug
 .\build\Release\operation_area_demo.exe --debug
+.\build\Release\perception_fusion_demo.exe --debug
 ```
 
 Each demo also accepts an optional output-image filename for the world-coordinate
@@ -123,6 +125,7 @@ figure:
 
 ```powershell
 .\build\Release\a_star_planner_demo.exe planner_result.png
+.\build\Release\perception_fusion_demo.exe perception_pipeline.png
 ```
 
 #### Basic demo environment randomization
@@ -554,8 +557,8 @@ steps do not cause spurious decrease-key operations.
 ## Visualization and debugging
 
 Visualization is a primary feature of this project rather than an afterthought.
-The two demos show the polygon environment, rasterized occupancy grid, start and
-goal, original connected path, and simplified line-of-sight path.
+The demos show the source environment, rasterized occupancy, start and goal,
+original connected path, and simplified line-of-sight path.
 
 - `a_star_planner_demo` demonstrates a complete master grid without an operation
   area. Its generated environment is repeatable by default, with optional
@@ -563,6 +566,16 @@ goal, original connected path, and simplified line-of-sight path.
   [Basic demo environment randomization](#basic-demo-environment-randomization).
 - `operation_area_demo` demonstrates a keep-in area, obstacle clipping, a master
   map, and a caller-selected planning ROI.
+- `perception_fusion_demo` demonstrates the complete mixed-input preprocessing
+  pipeline. Its four-panel visualization shows polygon occupancy, point-cloud
+  blob occupancy, their occupied-union fusion, and the final inflated grid with
+  both planned paths. An optional output filename saves that combined view.
+
+<p align="center">
+  <img src="images/perception_fusion_demo.png"
+       alt="Polygon and perception occupancy fusion pipeline"
+       width="1000">
+</p>
 
 The operation-area example produces the following type of environment:
 
@@ -702,6 +715,7 @@ options when building only the core planner and tests.
 - `occupancy_grid_visualization_tests` — rendering tests
 - `a_star_planner_demo` — full-grid tutorial
 - `operation_area_demo` — operation-area and ROI tutorial
+- `perception_fusion_demo` — polygon and perception occupancy-fusion tutorial
 - `a_star_planner_benchmark` — repeatable performance suite and CSV output
 - `a_star_planner_profile` — isolated repeated CPU workload
 - `a_star_search_debug` — visual comparison of search modes
