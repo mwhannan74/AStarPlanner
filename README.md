@@ -235,9 +235,9 @@ ends of requested bounds onto a stable cell lattice. It is useful when changing
 requests must retain the same world-aligned cell boundaries, but it is not
 required for the normal planning-boundary workflow.
 
-The following example selects explicit planning bounds, builds an operation
-area inside them, inflates the polygon occupancy, and plans across the resulting
-grid:
+The following example selects explicit planning bounds, rasterizes polygon and
+perception occupancy into the same geometry, fuses them, inflates once, and
+plans across the resulting grid:
 
 ```cpp
 #include "a_star_grid_planner.hpp"
@@ -261,6 +261,11 @@ int main()
             Point2(6.0, 8.0), Point2(4.0, 8.0)
         }
     };
+    const std::vector<Point2> obstaclePoints{
+        Point2(3.25, 7.25),
+        Point2(3.75, 7.25),
+        Point2(3.75, 7.75)
+    };
 
     const PolygonEnvironment environment(operationArea, obstacles);
     const WorldBounds planningBounds{
@@ -271,8 +276,12 @@ int main()
         GridGeometry::covering(planningBounds, 0.5);
     const OccupancyGrid polygonGrid = PolygonRasterizer::rasterize(
         planningGeometry, environment);
+    const OccupancyGrid perceptionGrid = PointRasterizer::rasterize(
+        planningGeometry, obstaclePoints);
+    const OccupancyGrid fusedGrid = OccupancyGridFusion::occupiedUnion(
+        polygonGrid, perceptionGrid);
     const OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
-        polygonGrid, 0.5);
+        fusedGrid, 0.5);
 
     const auto start = planningGrid.geometry().worldToCell(Point2(1.0, 1.0));
     const auto goal = planningGrid.geometry().worldToCell(Point2(9.0, 9.0));
@@ -644,8 +653,10 @@ Occupancy preprocessing
   Effective obstacles: 25
   Polygon grid: 69 x 75 cells at 1.000 world units/cell
   Planning grid: full map, 1.000 world units of safety inflation
-  Rasterization: 0.036 ms
-  Inflation: 0.048 ms
+  Environment validation: 0.018 ms
+  Polygon rasterization: 0.036 ms
+  Safety inflation: 0.048 ms
+  Total preprocessing: 0.102 ms
 ```
 
 ## Benchmarks and profiling
@@ -657,12 +668,33 @@ cmake --build build --config Release --target a_star_planner_benchmark
 .\build\Release\a_star_planner_benchmark.exe
 ```
 
-It measures environment preparation, direct rasterization into the requested
-planning geometry, inflation, terminal conversion, planning, path
-simplification, path conversion, and request totals. It also records search-work
-counters, raw path cells, simplified waypoints, and path cost in a timestamped
-CSV. Subgrid timing is intentionally excluded because subgrids are not part of
-the normal preprocessing pipeline.
+It measures environment validation, direct polygon and point rasterization into
+the requested planning geometry, occupied-union fusion, inflation, terminal
+conversion, planning, path simplification, path conversion, and request totals.
+It also records input counts, search-work counters, raw path cells, simplified
+waypoints, and path cost in a timestamped CSV. Subgrid timing is intentionally
+excluded because subgrids are not part of the normal preprocessing pipeline.
+
+The `mixed_occupancy` scenario supplies both polygons and perception points.
+Its points fall inside the polygon barriers so it measures the additional point
+rasterization and fusion work without changing the search problem relative to
+`alternating_barriers`. Polygon-only scenarios report zero for the skipped point
+rasterization and fusion stages.
+
+Preprocessing timing fields have the following boundaries:
+
+| Measurement | Included work |
+|---|---|
+| Environment | Polygon validation, normalization, and operation-area clipping |
+| Polygon rasterization | Allocate and paint the polygon occupancy grid |
+| Point rasterization | Allocate and paint the perception occupancy grid |
+| Fusion | Validate grid compatibility and create the occupied-union grid |
+| Inflation | Create the safety-inflated planning grid |
+| Preparation total | Complete measured preprocessing request, including the stages above |
+
+For CSV compatibility, the existing `rasterization_median_ms` column now
+specifically represents polygon rasterization. New input-count, point
+rasterization, and fusion fields are appended after the original columns.
 
 Useful options include:
 

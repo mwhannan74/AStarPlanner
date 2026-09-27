@@ -34,6 +34,7 @@ namespace
     {
         Open,
         AlternatingBarriers,
+        MixedOccupancy,
         NoPath
     };
 
@@ -50,6 +51,7 @@ namespace
         const char* name;
         Polygon operationArea;
         std::vector<Polygon> obstacles;
+        std::vector<Point2> perceptionPoints;
         Point2 worldStart;
         Point2 worldGoal;
         bool pathExpected;
@@ -58,7 +60,9 @@ namespace
     struct TimingSamples
     {
         std::vector<double> environment;
-        std::vector<double> rasterization;
+        std::vector<double> polygonRasterization;
+        std::vector<double> pointRasterization;
+        std::vector<double> fusion;
         std::vector<double> inflation;
         std::vector<double> total;
     };
@@ -121,6 +125,7 @@ namespace
             "open",
             rectangle(0.0, 0.0, extent, extent),
             {},
+            {},
             Point2(3.5 * CELL_RESOLUTION_METERS, 3.5 * CELL_RESOLUTION_METERS),
             Point2(extent - 3.5 * CELL_RESOLUTION_METERS,
                 extent - 3.5 * CELL_RESOLUTION_METERS),
@@ -144,7 +149,10 @@ namespace
             return scenario;
         }
 
-        scenario.name = "alternating_barriers";
+        const bool includePerception = kind == ScenarioKind::MixedOccupancy;
+        scenario.name = includePerception
+            ? "mixed_occupancy"
+            : "alternating_barriers";
         constexpr int barrierCount = 6;
         const double wallHalfWidth = std::max(
             CELL_RESOLUTION_METERS, 0.005 * extent);
@@ -158,6 +166,26 @@ namespace
             scenario.obstacles.push_back(rectangle(
                 x - wallHalfWidth, minimumY,
                 x + wallHalfWidth, maximumY));
+
+            // The mixed case samples cells inside the polygon barriers. This
+            // exercises point rasterization and fusion without changing the
+            // search problem relative to the polygon-only barrier case.
+            if (includePerception)
+            {
+                for (double pointX = x - wallHalfWidth +
+                         0.5 * CELL_RESOLUTION_METERS;
+                     pointX < x + wallHalfWidth;
+                     pointX += CELL_RESOLUTION_METERS)
+                {
+                    for (double pointY = minimumY +
+                             0.5 * CELL_RESOLUTION_METERS;
+                         pointY < maximumY;
+                         pointY += CELL_RESOLUTION_METERS)
+                    {
+                        scenario.perceptionPoints.emplace_back(pointX, pointY);
+                    }
+                }
+            }
         }
         return scenario;
     }
@@ -176,22 +204,48 @@ namespace
 
         const GridGeometry geometry(
             Point2::Zero(), CELL_RESOLUTION_METERS, cells, cells);
-        const auto rasterizationStart = Clock::now();
+        const auto polygonRasterizationStart = Clock::now();
         const OccupancyGrid polygonGrid = PolygonRasterizer::rasterize(
             geometry, environment);
-        const auto rasterizationEnd = Clock::now();
+        const auto polygonRasterizationEnd = Clock::now();
+
+        double pointRasterizationMilliseconds = 0.0;
+        double fusionMilliseconds = 0.0;
+        std::optional<OccupancyGrid> fusedGrid;
+        if (!scenario.perceptionPoints.empty())
+        {
+            const auto pointRasterizationStart = Clock::now();
+            const OccupancyGrid perceptionGrid = PointRasterizer::rasterize(
+                geometry, scenario.perceptionPoints);
+            const auto pointRasterizationEnd = Clock::now();
+            pointRasterizationMilliseconds = elapsedMilliseconds(
+                pointRasterizationStart, pointRasterizationEnd);
+
+            const auto fusionStart = Clock::now();
+            fusedGrid = OccupancyGridFusion::occupiedUnion(
+                polygonGrid, perceptionGrid);
+            const auto fusionEnd = Clock::now();
+            fusionMilliseconds = elapsedMilliseconds(fusionStart, fusionEnd);
+        }
+
+        const OccupancyGrid& occupancyGrid = fusedGrid
+            ? *fusedGrid
+            : polygonGrid;
 
         const auto inflationStart = Clock::now();
         OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
-            polygonGrid, SAFETY_RADIUS_METERS);
+            occupancyGrid, SAFETY_RADIUS_METERS);
         const auto inflationEnd = Clock::now();
 
         if (samples)
         {
             samples->environment.push_back(elapsedMilliseconds(
                 environmentStart, environmentEnd));
-            samples->rasterization.push_back(elapsedMilliseconds(
-                rasterizationStart, rasterizationEnd));
+            samples->polygonRasterization.push_back(elapsedMilliseconds(
+                polygonRasterizationStart, polygonRasterizationEnd));
+            samples->pointRasterization.push_back(
+                pointRasterizationMilliseconds);
+            samples->fusion.push_back(fusionMilliseconds);
             samples->inflation.push_back(elapsedMilliseconds(
                 inflationStart, inflationEnd));
             samples->total.push_back(elapsedMilliseconds(totalStart, inflationEnd));
@@ -378,7 +432,9 @@ namespace
             << "coordinate_conversion_median_ms,search_median_ms,search_p95_ms,"
             << "path_simplification_median_ms,path_conversion_median_ms,"
             << "request_total_median_ms,success,status,expanded_nodes,generated_nodes,"
-            << "peak_open_set,path_cells,simplified_waypoints,path_cost\n";
+            << "peak_open_set,path_cells,simplified_waypoints,path_cost,"
+            << "polygon_obstacles,perception_points,"
+            << "point_rasterization_median_ms,fusion_median_ms\n";
     }
 
     void writeCsvRow(
@@ -401,7 +457,7 @@ namespace
             << ',' << aStarTieBreakPolicyName(options.tieBreakPolicy)
             << ',' << size.preparationRepetitions << ',' << size.searchRepetitions << ','
             << median(preparation.environment) << ','
-            << median(preparation.rasterization) << ','
+            << median(preparation.polygonRasterization) << ','
             << median(preparation.inflation) << ','
             << median(preparation.total) << ','
             << median(search.coordinateConversion) << ','
@@ -416,7 +472,11 @@ namespace
             << result.diagnostics.generatedNodes << ','
             << result.diagnostics.peakOpenSetSize << ','
             << result.path.size() << ',' << result.simplifiedPath.size() << ','
-            << result.diagnostics.pathCost << '\n';
+            << result.diagnostics.pathCost << ','
+            << scenario.obstacles.size() << ','
+            << scenario.perceptionPoints.size() << ','
+            << median(preparation.pointRasterization) << ','
+            << median(preparation.fusion) << '\n';
     }
 }
 
@@ -453,6 +513,7 @@ int main(int argc, char** argv)
         const std::vector<ScenarioKind> scenarioKinds{
             ScenarioKind::Open,
             ScenarioKind::AlternatingBarriers,
+            ScenarioKind::MixedOccupancy,
             ScenarioKind::NoPath
         };
         const std::string timestamp = timestampText("%Y-%m-%dT%H:%M:%S");
@@ -480,7 +541,11 @@ int main(int argc, char** argv)
                           << "  prep " << std::fixed << std::setprecision(3)
                           << median(preparation.total) << " ms"
                           << " (env " << median(preparation.environment)
-                          << ", raster " << median(preparation.rasterization)
+                          << ", polygon "
+                          << median(preparation.polygonRasterization)
+                          << ", points "
+                          << median(preparation.pointRasterization)
+                          << ", fuse " << median(preparation.fusion)
                           << ", inflate " << median(preparation.inflation) << ")\n";
                 std::cout << "  " << std::left << std::setw(17) << "algorithm"
                           << std::right << std::setw(12) << "median ms"

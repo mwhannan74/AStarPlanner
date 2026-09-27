@@ -89,7 +89,9 @@ int main(int argc, char* argv[])
     const Point2 goal(95.0, 52.0);
 
     // 2. Validate the polygons and clip obstacles to the operation area.
+    const auto environmentStartTime = Clock::now();
     const PolygonEnvironment environment(operationArea, obstacles);
+    const auto environmentElapsed = Clock::now() - environmentStartTime;
 
     // 3. Select the planning boundary before rasterization. The operation area
     // extends beyond it, but no larger intermediate grid needs to be allocated.
@@ -205,11 +207,19 @@ int main(int argc, char* argv[])
               << polygonGrid.geometry().resolution() << " world units/cell\n"
               << "  Planning grid: " << safetyRadius
               << " world units of safety inflation\n"
-              << "  Rasterization: "
+              << "  Environment validation: "
+              << std::chrono::duration<double, std::milli>(
+                     environmentElapsed).count()
+              << " ms\n"
+              << "  Polygon rasterization: "
               << std::chrono::duration<double, std::milli>(gridElapsed).count()
               << " ms\n"
-              << "  Inflation: "
+              << "  Safety inflation: "
               << std::chrono::duration<double, std::milli>(inflationElapsed).count()
+              << " ms\n"
+              << "  Total preprocessing: "
+              << std::chrono::duration<double, std::milli>(
+                     environmentElapsed + gridElapsed + inflationElapsed).count()
               << " ms\n";
     // 8. Convert both paths to world cell centers and render them.
     const std::vector<Point2> worldPath = gridPathToWorld(planningGrid, plan.path);

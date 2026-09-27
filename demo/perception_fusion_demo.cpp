@@ -126,7 +126,9 @@ int main(int argc, char* argv[])
             Point2(62.0, 29.0), Point2(55.0, 29.0)
         }
     };
+    const auto environmentStartTime = Clock::now();
     const PolygonEnvironment environment(obstacles);
+    const auto environmentElapsed = Clock::now() - environmentStartTime;
 
     // 3. Perception supplies world-coordinate obstacle samples. The overlapping
     // ellipses merely generate deterministic blob-shaped point detections for the
@@ -228,6 +230,9 @@ int main(int argc, char* argv[])
               << planningGrid.geometry().resolution() << " world units/cell\n"
               << "  Polygon obstacles: " << obstacles.size() << '\n'
               << "  Perception samples: " << perceptionPoints.size() << '\n'
+              << "  Environment validation: "
+              << std::chrono::duration<double, std::milli>(
+                     environmentElapsed).count() << " ms\n"
               << "  Polygon rasterization: "
               << std::chrono::duration<double, std::milli>(
                      polygonElapsed).count() << " ms\n"
@@ -239,7 +244,11 @@ int main(int argc, char* argv[])
                      fusionElapsed).count() << " ms\n"
               << "  Safety inflation: "
               << std::chrono::duration<double, std::milli>(
-                     inflationElapsed).count() << " ms\n";
+                     inflationElapsed).count() << " ms\n"
+              << "  Total preprocessing: "
+              << std::chrono::duration<double, std::milli>(
+                     environmentElapsed + polygonElapsed + pointElapsed +
+                     fusionElapsed + inflationElapsed).count() << " ms\n";
 
     // 6. Render a four-panel view of the pipeline. The bottom-right panel shows
     // the inflated grid with the original path, simplified path, and terminals.

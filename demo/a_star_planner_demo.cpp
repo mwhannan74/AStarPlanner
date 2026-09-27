@@ -105,7 +105,9 @@ int main(int argc, char* argv[])
     }
 
     // 2. Validate and normalize the polygon environment.
+    const auto environmentStartTime = Clock::now();
     const PolygonEnvironment environment(obstacles);
+    const auto environmentElapsed = Clock::now() - environmentStartTime;
     const WorldBounds obstacleBounds = GridGeometry::boundingBox(
         environment.effectiveObstacles());
 
@@ -240,11 +242,19 @@ int main(int argc, char* argv[])
               << polygonGrid.geometry().resolution() << " world units/cell\n"
               << "  Planning grid: full map, " << safetyRadius
               << " world units of safety inflation\n"
-              << "  Rasterization: "
+              << "  Environment validation: "
+              << std::chrono::duration<double, std::milli>(
+                     environmentElapsed).count()
+              << " ms\n"
+              << "  Polygon rasterization: "
               << std::chrono::duration<double, std::milli>(gridElapsed).count()
               << " ms\n"
-              << "  Inflation: "
+              << "  Safety inflation: "
               << std::chrono::duration<double, std::milli>(inflationElapsed).count()
+              << " ms\n"
+              << "  Total preprocessing: "
+              << std::chrono::duration<double, std::milli>(
+                     environmentElapsed + gridElapsed + inflationElapsed).count()
               << " ms\n";
     // 8. Convert cell centers back to world coordinates and render both views.
     const std::vector<Point2> worldPath = gridPathToWorld(planningGrid, plan.path);
