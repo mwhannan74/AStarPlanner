@@ -11,7 +11,9 @@
 #include "occupancy_grid_visualization.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
+#include <cstdint>
 #include <iomanip>
 #include <iostream>
 #include <random>
@@ -25,30 +27,65 @@ int main(int argc, char* argv[])
     using Clock = std::chrono::steady_clock;
 
     bool debugVisualizationEnabled = false;
+    bool randomSeedRequested = false;
+    bool explicitSeedProvided = false;
+    std::uint32_t environmentSeed = 7;
     std::string outputFile;
     for (int argumentIndex = 1; argumentIndex < argc; ++argumentIndex)
     {
         const std::string argument = argv[argumentIndex];
         if (argument == "--debug")
             debugVisualizationEnabled = true;
+        else if (argument == "--random")
+            randomSeedRequested = true;
+        else if (argument == "--seed")
+        {
+            if (++argumentIndex >= argc)
+            {
+                std::cerr << "--seed requires an unsigned integer\n";
+                return 1;
+            }
+
+            const std::string seedArgument = argv[argumentIndex];
+            const auto [end, error] = std::from_chars(
+                seedArgument.data(),
+                seedArgument.data() + seedArgument.size(),
+                environmentSeed);
+            if (error != std::errc{} || end != seedArgument.data() + seedArgument.size())
+            {
+                std::cerr << "Invalid seed: " << seedArgument << '\n';
+                return 1;
+            }
+            explicitSeedProvided = true;
+        }
         else if (outputFile.empty())
             outputFile = argument;
         else
         {
-            std::cerr << "Usage: a_star_planner_demo [output-image] [--debug]\n";
+            std::cerr
+                << "Usage: a_star_planner_demo [output-image] [--debug] "
+                   "[--random | --seed N]\n";
             return 1;
         }
     }
+    if (randomSeedRequested && explicitSeedProvided)
+    {
+        std::cerr << "--random and --seed cannot be used together\n";
+        return 1;
+    }
+    if (randomSeedRequested)
+        environmentSeed = std::random_device{}();
 
-    // 1. Define obstacle polygons in world coordinates. A fixed random seed
-    // keeps the tutorial repeatable while producing a nonuniform obstacle field.
+    // 1. Define obstacle polygons in world coordinates. The default fixed seed
+    // keeps the tutorial repeatable. Use --random for a fresh obstacle field or
+    // --seed N to reproduce a particular field.
     const int rows = 5;
     const int columns = 5;
     const double obstacleSize = 5.0;
     const double gap = 5.0;
     const double noise = gap * 0.5;
 
-    std::mt19937 generator(7);
+    std::mt19937 generator(environmentSeed);
     std::uniform_real_distribution<double> noiseDistribution(-noise, noise);
 
     std::vector<Polygon> obstacles;
@@ -175,7 +212,8 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    std::cout << '\n' << gridSearchAlgorithmName(options.algorithm);
+    std::cout << "\nEnvironment seed: " << environmentSeed << '\n'
+              << gridSearchAlgorithmName(options.algorithm);
     if (options.algorithm == GridSearchAlgorithm::WeightedAStar)
         std::cout << " (weight " << options.heuristicWeight << ')';
     std::cout << " planning completed in " << std::fixed << std::setprecision(3)

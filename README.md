@@ -125,6 +125,33 @@ figure:
 .\build\Release\a_star_planner_demo.exe planner_result.png
 ```
 
+#### Basic demo environment randomization
+
+`a_star_planner_demo` uses pseudo-random offsets for its obstacle polygons,
+start, and goal. Its default is the fixed seed `7`, so running the demo without
+a seed option produces the same environment every time.
+
+| Option | Behavior |
+| --- | --- |
+| No seed option | Use fixed seed `7` for the default repeatable environment |
+| `--random` | Choose a new seed and generate a different environment |
+| `--seed N` | Use unsigned integer `N` to generate a specific repeatable environment |
+
+For example:
+
+```powershell
+.\build\Release\a_star_planner_demo.exe
+.\build\Release\a_star_planner_demo.exe --random
+.\build\Release\a_star_planner_demo.exe --seed 42
+.\build\Release\a_star_planner_demo.exe planner_result.png --seed 42 --debug
+```
+
+The demo prints the seed it used. To reproduce an environment created with
+`--random`, rerun the demo with the printed value as `--seed N`. `--random` and
+`--seed N` are mutually exclusive. These options apply only to
+`a_star_planner_demo`; they do not alter the deterministic automated tests or
+the explicitly defined environment in `operation_area_demo`.
+
 ### Run the tests
 
 ```powershell
@@ -531,7 +558,9 @@ The two demos show the polygon environment, rasterized occupancy grid, start and
 goal, original connected path, and simplified line-of-sight path.
 
 - `a_star_planner_demo` demonstrates a complete master grid without an operation
-  area. A fixed random seed keeps its obstacle field repeatable.
+  area. Its generated environment is repeatable by default, with optional
+  random and caller-selected seeds described under
+  [Basic demo environment randomization](#basic-demo-environment-randomization).
 - `operation_area_demo` demonstrates a keep-in area, obstacle clipping, a master
   map, and a caller-selected planning ROI.
 
