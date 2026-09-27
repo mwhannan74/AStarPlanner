@@ -36,6 +36,7 @@ namespace
     using astar::GridRegion;
     using astar::GridSearchAlgorithm;
     using astar::GridSearchCellState;
+    using astar::LocalPlanningRegion;
     using astar::OccupancyGrid;
     using astar::OccupancyGridFusion;
     using astar::OccupancyGridInflator;
@@ -399,6 +400,84 @@ namespace
             "small polygon at large translated coordinates should remain valid");
         require(pointsNear(planner.effectiveObstacles().front().front(), obstacle.front()),
             "normalization should preserve translated polygon coordinates");
+    }
+
+    void localPlanningRegionBuildsAxisAlignedBounds()
+    {
+        const LocalPlanningRegion region =
+            LocalPlanningRegion::forwardSideBehind(20.0, 7.0, 5.0);
+        const WorldBounds bounds = region.boundsAround(Point2(10.0, -2.0));
+
+        require(pointsNear(bounds.minimum, Point2(5.0, -9.0)) &&
+                pointsNear(bounds.maximum, Point2(30.0, 5.0)),
+            "local planning bounds should use +x forward, -x behind, and symmetric y sides");
+        require(region.forwardDistance() == 20.0 &&
+                region.sideDistance() == 7.0 &&
+                region.behindDistance() == 5.0,
+            "local planning region should expose its configured distances");
+
+        const GridGeometry geometry = GridGeometry::covering(bounds, 1.0);
+        require(geometry.width() == 25 && geometry.height() == 14,
+            "local planning bounds should feed directly into grid geometry");
+    }
+
+    void localPlanningRegionBuildsCenteredSquare()
+    {
+        const LocalPlanningRegion region =
+            LocalPlanningRegion::centeredSquare(15.0);
+        const WorldBounds bounds = region.boundsAround(Point2(10.0, -2.0));
+
+        require(pointsNear(bounds.minimum, Point2(-5.0, -17.0)) &&
+                pointsNear(bounds.maximum, Point2(25.0, 13.0)),
+            "centered square should extend equally in every direction");
+        require(region.forwardDistance() == 15.0 &&
+                region.sideDistance() == 15.0 &&
+                region.behindDistance() == 15.0,
+            "centered square should configure equal half extents");
+    }
+
+    void localPlanningRegionRejectsInvalidConfiguration()
+    {
+        const double infinity = std::numeric_limits<double>::infinity();
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+
+        requireThrows<std::invalid_argument>(
+            []
+            {
+                static_cast<void>(
+                    LocalPlanningRegion::forwardSideBehind(-1.0, 2.0, 1.0));
+            },
+            "negative forward distance should be rejected");
+        requireThrows<std::invalid_argument>(
+            []
+            {
+                static_cast<void>(
+                    LocalPlanningRegion::forwardSideBehind(1.0, 0.0, 1.0));
+            },
+            "zero side distance should be rejected");
+        requireThrows<std::invalid_argument>(
+            []
+            {
+                static_cast<void>(
+                    LocalPlanningRegion::forwardSideBehind(0.0, 1.0, 0.0));
+            },
+            "zero forward and behind extent should be rejected");
+        requireThrows<std::invalid_argument>(
+            [infinity]
+            {
+                static_cast<void>(
+                    LocalPlanningRegion::centeredSquare(infinity));
+            },
+            "non-finite square extent should be rejected");
+
+        const LocalPlanningRegion region =
+            LocalPlanningRegion::centeredSquare(1.0);
+        requireThrows<std::invalid_argument>(
+            [&region, nan]
+            {
+                static_cast<void>(region.boundsAround(Point2(nan, 0.0)));
+            },
+            "non-finite reference position should be rejected");
     }
 
     void gridGeometryConvertsBetweenCoordinateFrames()
@@ -2078,6 +2157,9 @@ namespace
         { "Zero-area boundary contact is discarded", zeroAreaBoundaryContactIsDiscarded },
         { "Containing obstacle clips to operation area", containingObstacleClipsToOperationArea },
         { "Translated small polygon retains area", translatedSmallPolygonRetainsArea },
+        { "Local planning region builds axis-aligned bounds", localPlanningRegionBuildsAxisAlignedBounds },
+        { "Local planning region builds centered square", localPlanningRegionBuildsCenteredSquare },
+        { "Local planning region rejects invalid configuration", localPlanningRegionRejectsInvalidConfiguration },
         { "Grid geometry converts coordinate frames", gridGeometryConvertsBetweenCoordinateFrames },
         { "Grid geometry uses half-open bounds", gridGeometryUsesHalfOpenWorldBounds },
         { "Covering geometry rounds extents up", coveringGeometryRoundsExtentUpToWholeCells },

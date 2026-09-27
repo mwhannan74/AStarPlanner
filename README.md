@@ -37,6 +37,7 @@ The larger win is everything around the search:
 - Arbitrary world-coordinate obstacle points rasterized into occupied cells
 - Occupied-union fusion of aligned polygon and perception grids
 - Optional convex keep-in operation areas with obstacle clipping
+- Forward/side/behind and centered-square local planning-bound helpers
 - Safety inflation in world units
 - Four- or eight-connected A*, Dijkstra, and weighted A*
 - Configurable diagonal corner cutting and deterministic tie-breaking
@@ -70,6 +71,15 @@ Rasterize polygons                Rasterize points
 The application chooses the planning bounds. The planner does not require the
 grid to be robot-centered and does not infer a planning horizon from sensor
 range, start, goal, or obstacle positions.
+
+Robot-oriented applications can create bounds around a position without making
+the grid or planner robot-specific:
+
+```cpp
+const LocalPlanningRegion region =
+    LocalPlanningRegion::forwardSideBehind(20.0, 10.0, 5.0);
+const WorldBounds planningBounds = region.boundsAround(robotPosition);
+```
 
 ## Documentation
 

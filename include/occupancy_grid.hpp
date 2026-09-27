@@ -42,6 +42,117 @@ namespace astar
         Point2 maximum;
     };
 
+    /**
+     * Configures axis-aligned planning bounds around a reference position.
+     *
+     * Forward is positive x, behind is negative x, and side extends equally in
+     * positive and negative y in the coordinate frame supplied by the caller.
+     * The type does not apply robot poses or coordinate-frame transforms.
+     */
+    class LocalPlanningRegion
+    {
+    public:
+        static LocalPlanningRegion forwardSideBehind(
+            double forwardDistance,
+            double sideDistance,
+            double behindDistance)
+        {
+            validateDistance(
+                forwardDistance,
+                true,
+                "LocalPlanningRegion: forward distance");
+            validateDistance(
+                sideDistance,
+                false,
+                "LocalPlanningRegion: side distance");
+            validateDistance(
+                behindDistance,
+                true,
+                "LocalPlanningRegion: behind distance");
+            if (!std::isfinite(forwardDistance + behindDistance) ||
+                forwardDistance + behindDistance <= 0.0)
+            {
+                throw std::invalid_argument(
+                    "LocalPlanningRegion: forward and behind distances cannot both be zero");
+            }
+            return LocalPlanningRegion(
+                forwardDistance, sideDistance, behindDistance);
+        }
+
+        static LocalPlanningRegion centeredSquare(double halfExtent)
+        {
+            validateDistance(
+                halfExtent,
+                false,
+                "LocalPlanningRegion: square half extent");
+            return LocalPlanningRegion(halfExtent, halfExtent, halfExtent);
+        }
+
+        WorldBounds boundsAround(const Point2& referencePosition) const
+        {
+            if (!isFinite(referencePosition))
+            {
+                throw std::invalid_argument(
+                    "LocalPlanningRegion::boundsAround: reference position must be finite");
+            }
+
+            const WorldBounds bounds{
+                Point2(
+                    referencePosition.x() - _behindDistance,
+                    referencePosition.y() - _sideDistance),
+                Point2(
+                    referencePosition.x() + _forwardDistance,
+                    referencePosition.y() + _sideDistance)
+            };
+            if (!isFinite(bounds.minimum) || !isFinite(bounds.maximum))
+            {
+                throw std::invalid_argument(
+                    "LocalPlanningRegion::boundsAround: resulting bounds are not finite");
+            }
+            return bounds;
+        }
+
+        double forwardDistance() const noexcept { return _forwardDistance; }
+        double sideDistance() const noexcept { return _sideDistance; }
+        double behindDistance() const noexcept { return _behindDistance; }
+
+    private:
+        LocalPlanningRegion(
+            double forwardDistance,
+            double sideDistance,
+            double behindDistance) noexcept
+            : _forwardDistance(forwardDistance),
+              _sideDistance(sideDistance),
+              _behindDistance(behindDistance)
+        {
+        }
+
+        static bool isFinite(const Point2& point) noexcept
+        {
+            return std::isfinite(point.x()) && std::isfinite(point.y());
+        }
+
+        static void validateDistance(
+            double distance,
+            bool allowZero,
+            const char* description)
+        {
+            if (!std::isfinite(distance) ||
+                distance < 0.0 || (!allowZero && distance == 0.0))
+            {
+                throw std::invalid_argument(
+                    std::string(description) +
+                    (allowZero
+                        ? " must be finite and nonnegative"
+                        : " must be finite and positive"));
+            }
+        }
+
+        double _forwardDistance;
+        double _sideDistance;
+        double _behindDistance;
+    };
+
     struct GridRegion
     {
         GridCell lowerLeft;

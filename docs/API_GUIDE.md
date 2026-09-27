@@ -57,6 +57,38 @@ struct GridRegion
 
 `Point2` and `GridCell` are Cartesian. Grid row zero is the bottom row.
 
+## `LocalPlanningRegion`
+
+`LocalPlanningRegion` creates axis-aligned `WorldBounds` around a reference
+position. Positive x is forward, negative x is behind, and the side distance
+extends equally in positive and negative y.
+
+Factories:
+
+```cpp
+static LocalPlanningRegion forwardSideBehind(
+    double forwardDistance,
+    double sideDistance,
+    double behindDistance);
+
+static LocalPlanningRegion centeredSquare(
+    double halfExtent);
+```
+
+Bounds and accessors:
+
+```cpp
+WorldBounds boundsAround(const Point2& referencePosition) const;
+
+double forwardDistance() const;
+double sideDistance() const;
+double behindDistance() const;
+```
+
+The helper returns bounds only. Callers retain the choice between
+`GridGeometry::covering()` and `GridGeometry::alignedCovering()`. It does not
+apply pose transforms or rotate the grid.
+
 ## `PolygonEnvironment`
 
 Constructors:

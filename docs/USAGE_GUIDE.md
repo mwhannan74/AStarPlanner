@@ -151,6 +151,61 @@ ends of the requested bounds onto a stable lattice defined by a resolution and
 anchor. Use it when separate requests must retain identical world-aligned cell
 boundaries.
 
+### Local robot-style planning bounds
+
+`LocalPlanningRegion` is a geometry convenience helper for planning around a
+robot or any other moving reference position. It does not change the behavior
+of `GridGeometry`, `OccupancyGrid`, or the planner.
+
+Create a forward-looking region with one symmetric side distance:
+
+```cpp
+const LocalPlanningRegion region =
+    LocalPlanningRegion::forwardSideBehind(
+        20.0,  // forward
+        10.0,  // positive and negative side distance
+        5.0);  // behind
+
+const WorldBounds planningBounds =
+    region.boundsAround(robotPosition);
+
+const GridGeometry planningGeometry =
+    GridGeometry::covering(planningBounds, resolution);
+```
+
+Create a symmetric square by specifying its half extent:
+
+```cpp
+const LocalPlanningRegion region =
+    LocalPlanningRegion::centeredSquare(15.0);
+```
+
+This produces a square extending 15 world units in every direction, for a total
+width and height of 30 world units.
+
+The helper is deliberately axis-aligned in the caller's coordinate frame:
+
+```text
+forward = positive x
+behind  = negative x
+side    = positive and negative y
+```
+
+For a robot-aligned local frame, positive x naturally represents robot forward.
+For a world/map frame, the caller is responsible for selecting an appropriate
+frame or using the orientation-independent centered square. The helper does not
+rotate points or polygons and does not create an axis-aligned bounding box for a
+rotated robot footprint.
+
+The helper returns `WorldBounds` rather than choosing grid alignment. The caller
+can pass those bounds to either `GridGeometry::covering()` or
+`GridGeometry::alignedCovering()`.
+
+Forward and behind distances may individually be zero, but not both. Side
+distance and square half extent must be positive. When inflation is enabled,
+placing the reference position directly against a planning boundary may make
+its cell occupied because space beyond the grid is treated as occupied.
+
 Avoid constructing a grid larger than the planning request merely to crop it
 later. Allocation, rasterization, fusion, inflation, and search all scale with
 the number of cells.
