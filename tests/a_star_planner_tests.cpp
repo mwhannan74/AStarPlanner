@@ -37,6 +37,7 @@ namespace
     using astar::GridSearchAlgorithm;
     using astar::GridSearchCellState;
     using astar::OccupancyGrid;
+    using astar::OccupancyGridFusion;
     using astar::OccupancyGridInflator;
     using astar::PointRasterizer;
     using astar::Point2;
@@ -827,6 +828,96 @@ namespace
         const OccupancyGrid emptyGrid = PointRasterizer::rasterize(geometry, {});
         require(cv::countNonZero(emptyGrid.imageView()) == 0,
             "an empty point collection should produce a completely free grid");
+    }
+
+    void occupancyFusionUsesOccupiedUnion()
+    {
+        const GridGeometry geometry(Point2(0.0, 0.0), 1.0, 4, 4);
+        const OccupancyGrid firstMaster = PointRasterizer::rasterize(
+            geometry,
+            { Point2(1.5, 1.5), Point2(2.5, 1.5) });
+        const OccupancyGrid secondMaster = PointRasterizer::rasterize(
+            geometry,
+            { Point2(2.5, 1.5), Point2(1.5, 2.5) });
+        const GridRegion region{ { 1, 1 }, 2, 2 };
+        const OccupancyGrid first = firstMaster.subgrid(
+            region, SubgridStorage::IndependentCopy);
+        const OccupancyGrid second = secondMaster.subgrid(
+            region, SubgridStorage::IndependentCopy);
+
+        const OccupancyGrid fused = OccupancyGridFusion::occupiedUnion(
+            first, second);
+
+        require(fused.at({ 0, 0 }) == CellState::Occupied &&
+                fused.at({ 1, 0 }) == CellState::Occupied &&
+                fused.at({ 0, 1 }) == CellState::Occupied &&
+                fused.at({ 1, 1 }) == CellState::Free,
+            "occupied union should mark a cell occupied when either input is occupied");
+        require(fused.masterCellOffset() == GridCell{ 1, 1 } &&
+                pointsNear(fused.geometry().worldOrigin(), Point2(1.0, 1.0)),
+            "occupied union should preserve grid geometry and master offset");
+        require(fused.imageView().data != first.imageView().data &&
+                fused.imageView().data != second.imageView().data,
+            "occupied union should return independently owned storage");
+        require(cv::countNonZero(first.imageView()) == 2 &&
+                cv::countNonZero(second.imageView()) == 2,
+            "occupied union should not modify either input grid");
+    }
+
+    void occupancyFusionRejectsIncompatibleGrids()
+    {
+        const OccupancyGrid reference(
+            GridGeometry(Point2(0.0, 0.0), 1.0, 2, 2),
+            CellState::Free);
+
+        const OccupancyGrid differentDimensions(
+            GridGeometry(Point2(0.0, 0.0), 1.0, 3, 2),
+            CellState::Free);
+        requireThrows<std::invalid_argument>(
+            [&]
+            {
+                static_cast<void>(OccupancyGridFusion::occupiedUnion(
+                    reference, differentDimensions));
+            },
+            "occupied union should reject different grid dimensions");
+
+        const OccupancyGrid differentOrigin(
+            GridGeometry(Point2(0.5, 0.0), 1.0, 2, 2),
+            CellState::Free);
+        requireThrows<std::invalid_argument>(
+            [&]
+            {
+                static_cast<void>(OccupancyGridFusion::occupiedUnion(
+                    reference, differentOrigin));
+            },
+            "occupied union should reject different grid origins");
+
+        const OccupancyGrid differentResolution(
+            GridGeometry(Point2(0.0, 0.0), 0.5, 2, 2),
+            CellState::Free);
+        requireThrows<std::invalid_argument>(
+            [&]
+            {
+                static_cast<void>(OccupancyGridFusion::occupiedUnion(
+                    reference, differentResolution));
+            },
+            "occupied union should reject different grid resolutions");
+
+        const OccupancyGrid master(
+            GridGeometry(Point2(-1.0, -1.0), 1.0, 4, 4),
+            CellState::Free);
+        const OccupancyGrid offsetGrid = master.subgrid(
+            { { 1, 1 }, 2, 2 }, SubgridStorage::IndependentCopy);
+        require(pointsNear(
+                offsetGrid.geometry().worldOrigin(), reference.geometry().worldOrigin()),
+            "offset mismatch fixture should retain matching local geometry");
+        requireThrows<std::invalid_argument>(
+            [&]
+            {
+                static_cast<void>(OccupancyGridFusion::occupiedUnion(
+                    reference, offsetGrid));
+            },
+            "occupied union should reject different master-cell offsets");
     }
 
     void rasterizationProducesBinaryOpenCvImage()
@@ -1952,6 +2043,8 @@ namespace
         { "Obstacle outside grid leaves map free", obstacleOutsideGridLeavesMapFree },
         { "Obstacle overrides operation area", obstacleOverridesOperationAreaFreeSpace },
         { "Point rasterization paints contained world points", pointRasterizationPaintsContainedWorldPoints },
+        { "Occupancy fusion uses occupied union", occupancyFusionUsesOccupiedUnion },
+        { "Occupancy fusion rejects incompatible grids", occupancyFusionRejectsIncompatibleGrids },
         { "Rasterization produces binary OpenCV image", rasterizationProducesBinaryOpenCvImage },
         { "Operation area builds aligned master grid", operationAreaCanBuildAlignedMasterGrid },
         { "Validated environment selects rasterization mode", validatedEnvironmentSelectsRasterizationMode },

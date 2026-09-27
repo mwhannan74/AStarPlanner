@@ -40,6 +40,7 @@ reference for learning, experimenting, and diagnosing grid-based planning.
 
 - Convex polygon obstacles in world coordinates
 - Arbitrary world-coordinate obstacle points rasterized into occupied cells
+- Occupied-union fusion of aligned polygon and perception grids
 - Optional convex keep-in operation area with obstacle clipping
 - OpenCV-backed binary occupancy grids and planning subgrids
 - Safety inflation in world units, including conservative grid-boundary handling
@@ -175,8 +176,8 @@ can be rasterized and searched, and data outside it cannot be used by the
 planner.
 
 The occupancy preprocessing pipeline is organized around that one shared
-geometry. Polygon and point rasterization are implemented; occupied-union
-fusion is the next planned extension:
+geometry. Polygon rasterization, point rasterization, and occupied-union fusion
+are implemented:
 
 ```text
 Application selects planningBounds and resolution
@@ -391,6 +392,21 @@ accumulate perception history.
 Rasterization follows OpenCV `fillConvexPoly` pixel coverage. It does not mark
 every cell touched by the continuous polygon geometry. Applications requiring a
 safety margin should plan on an independently inflated grid.
+
+### Occupancy fusion
+
+Polygon and perception grids created from the same `planningGeometry` can be
+combined with occupied-wins semantics:
+
+```cpp
+const OccupancyGrid fusedGrid = OccupancyGridFusion::occupiedUnion(
+    polygonGrid, perceptionGrid);
+```
+
+A fused cell is occupied when either input cell is occupied. Inputs must have
+identical dimensions, origin, resolution, and master-cell offset. Fusion does
+not modify either input and returns independently owned storage. Apply safety
+inflation once after all occupancy sources have been fused.
 
 ### Safety inflation
 
@@ -665,7 +681,7 @@ options when building only the core planner and tests.
 
 - `a_star_planner.hpp` — polygon environment model
 - `occupancy_grid.hpp` — grid geometry, occupancy storage, polygon and point
-  rasterization, and inflation
+  rasterization, occupied-union fusion, and inflation
 - `a_star_grid_planner.hpp` — search, planning results, and path simplification
 - `occupancy_grid_visualization.hpp` — OpenCV grid and search-state rendering
 - `a_star_planner_visualization.hpp` — MatPlotOpenCV environment plotting
@@ -688,6 +704,8 @@ features do.
 - A planning ROI is a hard search limit. There is no automatic expanding-ROI
   retry policy.
 - The planner assumes a static occupancy grid during each request.
+- Occupancy fusion currently requires already aligned grids; it does not
+  resample, reproject, or reconcile different resolutions.
 
 ## Project background
 

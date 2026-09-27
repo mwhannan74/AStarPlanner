@@ -430,6 +430,7 @@ namespace astar
     };
 
     class OccupancyGridInflator;
+    class OccupancyGridFusion;
     class PointRasterizer;
     class PolygonRasterizer;
 
@@ -596,6 +597,7 @@ namespace astar
 
     private:
         friend class OccupancyGridInflator;
+        friend class OccupancyGridFusion;
         friend class PointRasterizer;
         friend class PolygonRasterizer;
 
@@ -795,6 +797,65 @@ namespace astar
                     static_cast<std::uint8_t>(CellState::Occupied);
             }
             return grid;
+        }
+    };
+
+    /** Combines compatible occupancy sources using occupied-wins semantics. */
+    class OccupancyGridFusion
+    {
+    public:
+        /**
+         * Returns an independently owned grid whose cells are occupied when
+         * either input cell is occupied.
+         *
+         * Inputs must describe the same cell lattice and master-grid region.
+         * Neither input is modified.
+         *
+         * @throws std::invalid_argument if dimensions, origin, resolution, or
+         * master-cell offsets differ.
+         */
+        static OccupancyGrid occupiedUnion(
+            const OccupancyGrid& first,
+            const OccupancyGrid& second)
+        {
+            validateCompatibility(first, second);
+
+            cv::Mat1b fusedOccupancy;
+            cv::bitwise_or(
+                first.imageView(), second.imageView(), fusedOccupancy);
+            return OccupancyGrid(
+                first.geometry(),
+                std::move(fusedOccupancy),
+                first.masterCellOffset());
+        }
+
+    private:
+        static void validateCompatibility(
+            const OccupancyGrid& first,
+            const OccupancyGrid& second)
+        {
+            const GridGeometry& firstGeometry = first.geometry();
+            const GridGeometry& secondGeometry = second.geometry();
+            if (firstGeometry.width() != secondGeometry.width() ||
+                firstGeometry.height() != secondGeometry.height())
+            {
+                throw std::invalid_argument(
+                    "OccupancyGridFusion::occupiedUnion: grid dimensions must match");
+            }
+            if (firstGeometry.worldOrigin().x() !=
+                    secondGeometry.worldOrigin().x() ||
+                firstGeometry.worldOrigin().y() !=
+                    secondGeometry.worldOrigin().y() ||
+                firstGeometry.resolution() != secondGeometry.resolution())
+            {
+                throw std::invalid_argument(
+                    "OccupancyGridFusion::occupiedUnion: grid origins and resolutions must match");
+            }
+            if (first.masterCellOffset() != second.masterCellOffset())
+            {
+                throw std::invalid_argument(
+                    "OccupancyGridFusion::occupiedUnion: master-cell offsets must match");
+            }
         }
     };
 
