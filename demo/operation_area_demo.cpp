@@ -1,8 +1,8 @@
-// operation_area_demo.cpp - Operation-area and planning-ROI tutorial.
+// operation_area_demo.cpp - Operation-area and obstacle-clipping tutorial.
 //
 // This example adds a convex keep-in area, obstacles that require clipping,
-// and a caller-selected planning ROI. The planning steps otherwise match the
-// basic full-grid demo.
+// and a caller-selected planning boundary. The planning steps otherwise match
+// the basic full-grid demo.
 
 #include "a_star_planner.hpp"
 #include "a_star_grid_planner.hpp"
@@ -91,47 +91,42 @@ int main(int argc, char* argv[])
     // 2. Validate the polygons and clip obstacles to the operation area.
     const PolygonEnvironment environment(operationArea, obstacles);
 
-    // 3. Build an aligned master grid around the operation area. Rasterization
-    // starts occupied, paints the operation area free, then paints obstacles.
+    // 3. Select the planning boundary before rasterization. The operation area
+    // extends beyond it, but no larger intermediate grid needs to be allocated.
     constexpr double gridResolution = 1.0;
     constexpr double safetyRadius = 1.0;
-    const GridGeometry masterGeometry = GridGeometry::alignedCovering(
-        environment.operationArea(), gridResolution);
-    const auto gridStartTime = Clock::now();
-    const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
-        masterGeometry, environment);
-    const auto gridElapsed = Clock::now() - gridStartTime;
-    // 4. Select a planning ROI. This caller-selected window retains the full
-    // vertical span and therefore the routes around the alternating walls.
     const WorldBounds planningBounds{
         Point2(3.0, 0.0),
         Point2(97.0, 60.0)
     };
-    const OccupancyGrid planningRegion = masterGrid.subgrid(planningBounds);
+    const GridGeometry planningGeometry = GridGeometry::covering(
+        planningBounds, gridResolution);
 
-    // 5. Inflate occupied cells and the ROI boundary. This tutorial deliberately
-    // treats the selected ROI as a hard planning boundary. If the ROI were only a
-    // performance crop within otherwise usable master-map space, the less
-    // restrictive order would be to inflate masterGrid first and then take its
-    // subgrid. The rasterized master and uninflated ROI remain unchanged here.
+    // 4. Rasterize directly into the planning geometry. Rasterization starts
+    // occupied, paints the operation area free, then paints effective obstacles.
+    const auto gridStartTime = Clock::now();
+    const OccupancyGrid polygonGrid = PolygonRasterizer::rasterize(
+        planningGeometry, environment);
+    const auto gridElapsed = Clock::now() - gridStartTime;
+
+    // 5. Inflate occupied cells and the planning boundary. The uninflated
+    // polygon grid remains available for visualization or another safety radius.
     const auto inflationStartTime = Clock::now();
     const OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
-        planningRegion, safetyRadius);
+        polygonGrid, safetyRadius);
     const auto inflationElapsed = Clock::now() - inflationStartTime;
 
-    // 6. Convert world terminals using the ROI geometry, producing ROI-local
-    // cells. masterCellOffset() relates those cells to the master grid.
+    // 6. Convert world terminals using the planning geometry.
     const auto startCell = planningGrid.geometry().worldToCell(start);
     const auto goalCell = planningGrid.geometry().worldToCell(goal);
     if (!startCell || !goalCell)
     {
-        std::cerr << "Start or goal is outside the planning ROI\n";
+        std::cerr << "Start or goal is outside the planning grid\n";
         return 1;
     }
 
-    // 7. Plan with normal A* inside the selected ROI. Dijkstra and weighted A*
-    // can be selected through the same options. NoPath only means that no route
-    // exists inside this ROI, not necessarily inside the complete master grid.
+    // 7. Plan with normal A* inside the selected boundary. Dijkstra and weighted
+    // A* can be selected through the same options.
     const AStarGridPlanner gridPlanner;
     AStarOptions options;
     //options.algorithm = GridSearchAlgorithm::Dijkstra;
@@ -199,27 +194,24 @@ int main(int argc, char* argv[])
               << "  Expanded: " << plan.diagnostics.expandedNodes << '\n'
               << "  Generated: " << plan.diagnostics.generatedNodes << '\n'
               << "  Peak open set: " << plan.diagnostics.peakOpenSetSize << "\n\n"
-              << "Grid preparation\n"
+              << "Occupancy preprocessing\n"
               << "  Input obstacles: " << obstacles.size() << '\n'
               << "  Effective obstacles after clipping: "
               << environment.effectiveObstacles().size() << '\n'
               << "  Clipped obstacle overlays: "
               << environment.clippedObstacles().size() << '\n'
-              << "  Master grid: " << masterGrid.width() << " x "
-              << masterGrid.height() << " cells at "
-              << masterGrid.geometry().resolution() << " world units/cell\n"
-              << "  Planning ROI: " << planningGrid.width() << " x "
-              << planningGrid.height() << " cells, master offset ("
-              << planningGrid.masterCellOffset().column << ", "
-              << planningGrid.masterCellOffset().row << "), "
-              << safetyRadius << " world units of safety inflation\n"
+              << "  Polygon grid: " << polygonGrid.width() << " x "
+              << polygonGrid.height() << " cells at "
+              << polygonGrid.geometry().resolution() << " world units/cell\n"
+              << "  Planning grid: " << safetyRadius
+              << " world units of safety inflation\n"
               << "  Rasterization: "
               << std::chrono::duration<double, std::milli>(gridElapsed).count()
               << " ms\n"
               << "  Inflation: "
               << std::chrono::duration<double, std::milli>(inflationElapsed).count()
               << " ms\n";
-    // 8. Convert both ROI-local paths to world cell centers and render them.
+    // 8. Convert both paths to world cell centers and render them.
     const std::vector<Point2> worldPath = gridPathToWorld(planningGrid, plan.path);
     const std::vector<Point2> simplifiedWorldPath =
         gridPathToWorld(planningGrid, plan.simplifiedPath);
@@ -240,7 +232,7 @@ int main(int argc, char* argv[])
     gridView.markers.push_back({ *startCell, cv::Scalar(0, 180, 0), 3 });
     gridView.markers.push_back({ *goalCell, cv::Scalar(0, 0, 255), 3 });
 
-    showOccupancyGrid(planningGrid, gridView, "AStarPlanner Inflated Planning ROI");
+    showOccupancyGrid(planningGrid, gridView, "AStarPlanner Inflated Planning Grid");
     cv::waitKey(0);
     return 0;
 }

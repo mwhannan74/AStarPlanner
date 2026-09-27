@@ -366,14 +366,10 @@ int main(int argc, char** argv)
             operationArea, makeAlternatingBarriers(extent));
         const GridGeometry geometry(
             Point2::Zero(), CELL_RESOLUTION_METERS, GRID_CELLS, GRID_CELLS);
-        const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
-            geometry,
-            environment.operationArea(),
-            environment.effectiveObstacles());
-        const OccupancyGrid planningRegion = masterGrid.subgrid(
-            masterGrid.fullRegion());
+        const OccupancyGrid polygonGrid = PolygonRasterizer::rasterize(
+            geometry, environment);
         const OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
-            planningRegion, SAFETY_RADIUS_METERS);
+            polygonGrid, SAFETY_RADIUS_METERS);
 
         const Point2 worldStart(
             3.5 * CELL_RESOLUTION_METERS,

@@ -74,13 +74,10 @@ namespace
             rectangle(0.0, 0.0, extent, extent), obstacles);
         const GridGeometry geometry(
             Point2::Zero(), CELL_RESOLUTION_METERS, GRID_SIZE, GRID_SIZE);
-        const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
-            geometry,
-            environment.operationArea(),
-            environment.effectiveObstacles());
+        const OccupancyGrid polygonGrid = PolygonRasterizer::rasterize(
+            geometry, environment);
         return OccupancyGridInflator::inflate(
-            masterGrid.subgrid(masterGrid.fullRegion()),
-            SAFETY_RADIUS_METERS);
+            polygonGrid, SAFETY_RADIUS_METERS);
     }
 
     AStarTieBreakPolicy parseTieBreakPolicy(const std::string& value)

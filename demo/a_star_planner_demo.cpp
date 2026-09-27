@@ -1,7 +1,7 @@
 // a_star_planner_demo.cpp - Basic full-grid planning tutorial.
 //
 // This example has no operation area. It shows how to validate world-coordinate
-// obstacles, choose an explicit master-grid extent, rasterize and inflate it,
+// obstacles, choose an explicit planning extent, rasterize and inflate it,
 // plan on the complete grid, and convert the resulting path to world coordinates.
 
 #include "a_star_planner.hpp"
@@ -133,20 +133,20 @@ int main(int argc, char* argv[])
     const GridGeometry gridGeometry = GridGeometry::alignedCovering(
         mapBounds, gridResolution);
 
-    // 4. Rasterize effective obstacles into a free master grid. With no
+    // 4. Rasterize effective obstacles into a free polygon grid. With no
     // operation area, only pixels covered by obstacles become occupied.
     const auto gridStartTime = Clock::now();
-    const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
+    const OccupancyGrid polygonGrid = PolygonRasterizer::rasterize(
         gridGeometry, environment);
     const auto gridElapsed = Clock::now() - gridStartTime;
 
     // 5. Inflate obstacles and the map boundary into a separate planning grid.
-    // This example treats the full master-map edge as the limit of known space,
-    // so enforcing clearance from it is intentional. The raw master grid remains
+    // This example treats the planning-grid edge as the limit of known space,
+    // so enforcing clearance from it is intentional. The raw polygon grid remains
     // available for other clearance choices.
     const auto inflationStartTime = Clock::now();
     const OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
-        masterGrid, safetyRadius);
+        polygonGrid, safetyRadius);
     const auto inflationElapsed = Clock::now() - inflationStartTime;
 
     // 6. Convert world terminals to cells in the inflated planning grid.
@@ -232,12 +232,12 @@ int main(int argc, char* argv[])
               << "  Expanded: " << plan.diagnostics.expandedNodes << '\n'
               << "  Generated: " << plan.diagnostics.generatedNodes << '\n'
               << "  Peak open set: " << plan.diagnostics.peakOpenSetSize << "\n\n"
-              << "Grid preparation\n"
+              << "Occupancy preprocessing\n"
               << "  Effective obstacles: "
               << environment.effectiveObstacles().size() << '\n'
-              << "  Master grid: " << masterGrid.width() << " x "
-              << masterGrid.height() << " cells at "
-              << masterGrid.geometry().resolution() << " world units/cell\n"
+              << "  Polygon grid: " << polygonGrid.width() << " x "
+              << polygonGrid.height() << " cells at "
+              << polygonGrid.geometry().resolution() << " world units/cell\n"
               << "  Planning grid: full map, " << safetyRadius
               << " world units of safety inflation\n"
               << "  Rasterization: "

@@ -59,7 +59,6 @@ namespace
     {
         std::vector<double> environment;
         std::vector<double> rasterization;
-        std::vector<double> roi;
         std::vector<double> inflation;
         std::vector<double> total;
     };
@@ -178,22 +177,13 @@ namespace
         const GridGeometry geometry(
             Point2::Zero(), CELL_RESOLUTION_METERS, cells, cells);
         const auto rasterizationStart = Clock::now();
-        const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
-            geometry,
-            environment.operationArea(),
-            environment.effectiveObstacles());
+        const OccupancyGrid polygonGrid = PolygonRasterizer::rasterize(
+            geometry, environment);
         const auto rasterizationEnd = Clock::now();
-
-        // The benchmark uses the full master map as its ROI. This still measures
-        // the normal zero-copy subgrid operation without changing the search area.
-        const auto roiStart = Clock::now();
-        const OccupancyGrid planningRegion = masterGrid.subgrid(
-            masterGrid.fullRegion());
-        const auto roiEnd = Clock::now();
 
         const auto inflationStart = Clock::now();
         OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
-            planningRegion, SAFETY_RADIUS_METERS);
+            polygonGrid, SAFETY_RADIUS_METERS);
         const auto inflationEnd = Clock::now();
 
         if (samples)
@@ -202,7 +192,6 @@ namespace
                 environmentStart, environmentEnd));
             samples->rasterization.push_back(elapsedMilliseconds(
                 rasterizationStart, rasterizationEnd));
-            samples->roi.push_back(elapsedMilliseconds(roiStart, roiEnd));
             samples->inflation.push_back(elapsedMilliseconds(
                 inflationStart, inflationEnd));
             samples->total.push_back(elapsedMilliseconds(totalStart, inflationEnd));
@@ -385,7 +374,7 @@ namespace
             << "safety_radius_m,algorithm,heuristic_weight,tie_break_policy,"
             << "preparation_repetitions,"
             << "search_repetitions,environment_median_ms,rasterization_median_ms,"
-            << "roi_median_ms,inflation_median_ms,preparation_total_median_ms,"
+            << "inflation_median_ms,preparation_total_median_ms,"
             << "coordinate_conversion_median_ms,search_median_ms,search_p95_ms,"
             << "path_simplification_median_ms,path_conversion_median_ms,"
             << "request_total_median_ms,success,status,expanded_nodes,generated_nodes,"
@@ -413,7 +402,6 @@ namespace
             << ',' << size.preparationRepetitions << ',' << size.searchRepetitions << ','
             << median(preparation.environment) << ','
             << median(preparation.rasterization) << ','
-            << median(preparation.roi) << ','
             << median(preparation.inflation) << ','
             << median(preparation.total) << ','
             << median(search.coordinateConversion) << ','
@@ -493,7 +481,6 @@ int main(int argc, char** argv)
                           << median(preparation.total) << " ms"
                           << " (env " << median(preparation.environment)
                           << ", raster " << median(preparation.rasterization)
-                          << ", ROI " << median(preparation.roi)
                           << ", inflate " << median(preparation.inflation) << ")\n";
                 std::cout << "  " << std::left << std::setw(17) << "algorithm"
                           << std::right << std::setw(12) << "median ms"

@@ -1845,7 +1845,7 @@ namespace
             "failed searches should retain work counts but have no finite path cost");
     }
 
-    void aStarPlanningPipelineUsesRoiLocalCoordinates()
+    void existingMapSubgridUsesLocalCoordinates()
     {
         const Polygon operationArea{
             Point2(0.0, 0.0), Point2(10.0, 0.0),
@@ -2036,12 +2036,13 @@ namespace
             }
         };
         const PolygonEnvironment environment(operationArea, obstacles);
-        const OccupancyGrid master = PolygonRasterizer::rasterize(
-            environment.operationArea(), environment.effectiveObstacles(), 1.0);
-        const OccupancyGrid planningRegion = master.subgrid(
-            WorldBounds{ Point2(3.0, 0.0), Point2(97.0, 60.0) });
+        const GridGeometry planningGeometry = GridGeometry::covering(
+            WorldBounds{ Point2(3.0, 0.0), Point2(97.0, 60.0) },
+            1.0);
+        const OccupancyGrid polygonGrid = PolygonRasterizer::rasterize(
+            planningGeometry, environment);
         const OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
-            planningRegion, 1.0);
+            polygonGrid, 1.0);
         const auto start = planningGrid.geometry().worldToCell(Point2(5.0, 8.0));
         const auto goal = planningGrid.geometry().worldToCell(Point2(95.0, 52.0));
         require(start.has_value() && goal.has_value(),
@@ -2123,7 +2124,7 @@ namespace
         { "A* uses eight-connected diagonal path by default", aStarUsesEightConnectedDiagonalPathByDefault },
         { "A* controls diagonal corner cutting", aStarControlsDiagonalCornerCutting },
         { "A* reports when no path exists", aStarReportsWhenNoPathExists },
-        { "A* planning pipeline uses ROI coordinates", aStarPlanningPipelineUsesRoiLocalCoordinates },
+        { "Existing-map subgrid uses local coordinates", existingMapSubgridUsesLocalCoordinates },
         { "Planning ROI can exclude valid detour", planningRoiCanExcludeAValidDetour },
         { "Grid path converts ROI cells to world centers", gridPathConvertsRoiCellsToWorldCenters },
         { "Polygon and perception pipeline finds path", polygonAndPerceptionPipelineFindsPath },

@@ -42,7 +42,7 @@ reference for learning, experimenting, and diagnosing grid-based planning.
 - Arbitrary world-coordinate obstacle points rasterized into occupied cells
 - Occupied-union fusion of aligned polygon and perception grids
 - Optional convex keep-in operation area with obstacle clipping
-- OpenCV-backed binary occupancy grids and planning subgrids
+- OpenCV-backed binary occupancy grids with optional subgrids for existing maps
 - Safety inflation in world units, including conservative grid-boundary handling
 - Four- or eight-connected A*, Dijkstra, and weighted A*
 - Configurable diagonal corner cutting and deterministic tie-breaking
@@ -449,11 +449,15 @@ therefore creates clearance around obstacles and a band along the grid boundary.
 This is appropriate when the edge represents unknown space, the operation-area
 boundary, or another hard planning limit.
 
-### Existing maps and optional subgrids
+### Advanced: existing maps and optional subgrids
 
 The default workflow selects the required planning bounds first and rasterizes
 directly into that geometry. This avoids allocating, rasterizing, fusing, and
 inflating a larger grid than the current request needs.
+
+Do not introduce a larger "master" grid solely to crop it immediately. A
+subgrid is an integration tool for a map that already exists independently of
+the current planning request, not a required preprocessing stage.
 
 `OccupancyGrid::subgrid()` remains useful when an application already owns a
 larger persistent map and wants to search only part of it. A subgrid limits the
@@ -560,12 +564,12 @@ Visualization is a primary feature of this project rather than an afterthought.
 The demos show the source environment, rasterized occupancy, start and goal,
 original connected path, and simplified line-of-sight path.
 
-- `a_star_planner_demo` demonstrates a complete master grid without an operation
-  area. Its generated environment is repeatable by default, with optional
-  random and caller-selected seeds described under
+- `a_star_planner_demo` demonstrates a complete planning grid without an
+  operation area. Its generated environment is repeatable by default, with
+  optional random and caller-selected seeds described under
   [Basic demo environment randomization](#basic-demo-environment-randomization).
-- `operation_area_demo` demonstrates a keep-in area, obstacle clipping, a master
-  map, and a caller-selected planning ROI.
+- `operation_area_demo` demonstrates a keep-in area, obstacle clipping, and
+  direct rasterization into caller-selected planning bounds.
 - `perception_fusion_demo` demonstrates the complete mixed-input preprocessing
   pipeline. Its four-panel visualization shows polygon occupancy, point-cloud
   blob occupancy, their occupied-union fusion, and the final inflated grid with
@@ -636,9 +640,9 @@ Search diagnostics
   Generated: 2272
   Peak open set: 148
 
-Grid preparation
+Occupancy preprocessing
   Effective obstacles: 25
-  Master grid: 69 x 75 cells at 1.000 world units/cell
+  Polygon grid: 69 x 75 cells at 1.000 world units/cell
   Planning grid: full map, 1.000 world units of safety inflation
   Rasterization: 0.036 ms
   Inflation: 0.048 ms
@@ -653,10 +657,12 @@ cmake --build build --config Release --target a_star_planner_benchmark
 .\build\Release\a_star_planner_benchmark.exe
 ```
 
-It measures environment preparation, rasterization, ROI creation, inflation,
-terminal conversion, planning, path simplification, path conversion, and request
-totals. It also records search-work counters, raw path cells, simplified
-waypoints, and path cost in a timestamped CSV.
+It measures environment preparation, direct rasterization into the requested
+planning geometry, inflation, terminal conversion, planning, path
+simplification, path conversion, and request totals. It also records search-work
+counters, raw path cells, simplified waypoints, and path cost in a timestamped
+CSV. Subgrid timing is intentionally excluded because subgrids are not part of
+the normal preprocessing pipeline.
 
 Useful options include:
 
@@ -698,7 +704,7 @@ without opening a window, `--output <file>` to select the PNG path, or
 | Option | Default | Purpose |
 |---|---:|---|
 | `BUILD_TESTING` | `ON` | Builds the test executables and registers CTest tests. |
-| `ASTAR_PLANNER_BUILD_DEMO` | `ON` | Builds the two tutorial demos. |
+| `ASTAR_PLANNER_BUILD_DEMO` | `ON` | Builds the three tutorial demos. |
 | `ASTAR_PLANNER_ENABLE_VISUALIZATION` | `ON` | Enables MatPlotOpenCV and OpenCV visualization support. |
 | `ASTAR_PLANNER_BUILD_BENCHMARKS` | `ON` | Builds benchmark and profiling executables. |
 
@@ -714,7 +720,7 @@ options when building only the core planner and tests.
 - `a_star_planner_tests` — deterministic core tests
 - `occupancy_grid_visualization_tests` — rendering tests
 - `a_star_planner_demo` — full-grid tutorial
-- `operation_area_demo` — operation-area and ROI tutorial
+- `operation_area_demo` — operation-area and obstacle-clipping tutorial
 - `perception_fusion_demo` — polygon and perception occupancy-fusion tutorial
 - `a_star_planner_benchmark` — repeatable performance suite and CSV output
 - `a_star_planner_profile` — isolated repeated CPU workload
@@ -744,8 +750,8 @@ features do.
 - Search terminals and returned grid paths represent cell centers.
 - Simplification creates straight collision-checked segments, not curves or
   vehicle-dynamics-constrained trajectories.
-- A planning ROI is a hard search limit. There is no automatic expanding-ROI
-  retry policy.
+- A subgrid used as a planning ROI is a hard search limit. There is no automatic
+  expanding-ROI retry policy.
 - The planner assumes a static occupancy grid during each request.
 - Occupancy fusion currently requires already aligned grids; it does not
   resample, reproject, or reconcile different resolutions.

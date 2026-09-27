@@ -548,7 +548,11 @@ namespace astar
         }
 
         /**
-         * Creates a cell-aligned planning grid.
+         * Creates a cell-aligned view or copy of part of an existing grid.
+         *
+         * This is intended for applications that already own a larger map. New
+         * occupancy pipelines should normally select their planning geometry
+         * before rasterization instead of building a larger grid and cropping it.
          *
          * SharedView is a zero-copy OpenCV ROI. It keeps the underlying pixels
          * alive through reference counting even after the source grid is
