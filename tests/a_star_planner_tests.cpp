@@ -1938,6 +1938,59 @@ namespace
             "path conversion should reject cells outside the planning grid");
     }
 
+    void polygonAndPerceptionPipelineFindsPath()
+    {
+        const WorldBounds planningBounds{
+            Point2(0.0, 0.0), Point2(12.0, 8.0)
+        };
+        const GridGeometry planningGeometry = GridGeometry::covering(
+            planningBounds, 1.0);
+        const Polygon polygonObstacle = obstacleInsideCell({ 4, 3 });
+        const PolygonEnvironment environment({ polygonObstacle });
+        const std::vector<Point2> perceptionPoints{
+            Point2(7.5, 3.5),
+            Point2(20.0, 20.0) // Outside the selected planning boundary.
+        };
+
+        const OccupancyGrid polygonGrid = PolygonRasterizer::rasterize(
+            planningGeometry, environment);
+        const OccupancyGrid perceptionGrid = PointRasterizer::rasterize(
+            planningGeometry, perceptionPoints);
+        const OccupancyGrid fusedGrid = OccupancyGridFusion::occupiedUnion(
+            polygonGrid, perceptionGrid);
+        const OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
+            fusedGrid, 1.0);
+
+        require(polygonGrid.at({ 4, 3 }) == CellState::Occupied &&
+                polygonGrid.isTraversable({ 7, 3 }),
+            "polygon rasterization should contain only the polygon obstacle");
+        require(perceptionGrid.isTraversable({ 4, 3 }) &&
+                perceptionGrid.at({ 7, 3 }) == CellState::Occupied &&
+                cv::countNonZero(perceptionGrid.imageView()) == 1,
+            "point rasterization should contain only in-bounds perception data");
+        require(fusedGrid.at({ 4, 3 }) == CellState::Occupied &&
+                fusedGrid.at({ 7, 3 }) == CellState::Occupied,
+            "fusion should retain polygon and perception obstacles");
+        require(planningGrid.at({ 4, 2 }) == CellState::Occupied &&
+                planningGrid.at({ 7, 4 }) == CellState::Occupied,
+            "the fused occupancy should be inflated once before planning");
+
+        const auto start = planningGrid.geometry().worldToCell(
+            Point2(1.5, 3.5));
+        const auto goal = planningGrid.geometry().worldToCell(
+            Point2(10.5, 3.5));
+        require(start == GridCell{ 1, 3 } && goal == GridCell{ 10, 3 },
+            "world terminals should map into the shared planning geometry");
+
+        const AStarGridPlanner planner;
+        const GridPlanResult result = planner.plan(
+            planningGrid, *start, *goal);
+        require(result.succeeded(),
+            "planner should find a route around fused and inflated occupancy");
+        requireValidEightConnectedPath(
+            planningGrid, result.path, *start, *goal);
+    }
+
     void operationAreaDemoEnvironmentFindsPath()
     {
         const Polygon operationArea{
@@ -2073,6 +2126,7 @@ namespace
         { "A* planning pipeline uses ROI coordinates", aStarPlanningPipelineUsesRoiLocalCoordinates },
         { "Planning ROI can exclude valid detour", planningRoiCanExcludeAValidDetour },
         { "Grid path converts ROI cells to world centers", gridPathConvertsRoiCellsToWorldCenters },
+        { "Polygon and perception pipeline finds path", polygonAndPerceptionPipelineFindsPath },
         { "Operation-area demo environment finds path", operationAreaDemoEnvironmentFindsPath }
     };
 }
