@@ -38,6 +38,7 @@ namespace
     using astar::GridSearchCellState;
     using astar::OccupancyGrid;
     using astar::OccupancyGridInflator;
+    using astar::PointRasterizer;
     using astar::Point2;
     using astar::Polygon;
     using astar::PolygonEnvironment;
@@ -794,6 +795,38 @@ namespace
             "operation-area interior cells should remain free");
         require(grid.imageView().rows == 3 && grid.imageView().cols == 3,
             "OpenCV image dimensions should match grid dimensions");
+    }
+
+    void pointRasterizationPaintsContainedWorldPoints()
+    {
+        const GridGeometry geometry(Point2(-2.0, -1.0), 0.5, 6, 4);
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const double infinity = std::numeric_limits<double>::infinity();
+        const std::vector<Point2> obstaclePoints{
+            Point2(-2.0, -1.0),
+            Point2(-2.0, -1.0), // Duplicate in the lower-left cell.
+            Point2(-0.9, 0.1),
+            Point2(0.99, 0.99),
+            Point2(-2.01, 0.0),
+            Point2(1.0, 0.0),
+            Point2(0.0, 1.0),
+            Point2(nan, 0.0),
+            Point2(0.0, infinity)
+        };
+
+        const OccupancyGrid grid = PointRasterizer::rasterize(
+            geometry, obstaclePoints);
+
+        require(grid.at({ 0, 0 }) == CellState::Occupied &&
+                grid.at({ 2, 2 }) == CellState::Occupied &&
+                grid.at({ 5, 3 }) == CellState::Occupied,
+            "contained world points should occupy their corresponding Cartesian cells");
+        require(cv::countNonZero(grid.imageView()) == 3,
+            "duplicates and invalid or out-of-bounds points should not add occupied cells");
+
+        const OccupancyGrid emptyGrid = PointRasterizer::rasterize(geometry, {});
+        require(cv::countNonZero(emptyGrid.imageView()) == 0,
+            "an empty point collection should produce a completely free grid");
     }
 
     void rasterizationProducesBinaryOpenCvImage()
@@ -1918,6 +1951,7 @@ namespace
         { "Rasterizer rejects invalid polygons", rasterizerRejectsInvalidPolygons },
         { "Obstacle outside grid leaves map free", obstacleOutsideGridLeavesMapFree },
         { "Obstacle overrides operation area", obstacleOverridesOperationAreaFreeSpace },
+        { "Point rasterization paints contained world points", pointRasterizationPaintsContainedWorldPoints },
         { "Rasterization produces binary OpenCV image", rasterizationProducesBinaryOpenCvImage },
         { "Operation area builds aligned master grid", operationAreaCanBuildAlignedMasterGrid },
         { "Validated environment selects rasterization mode", validatedEnvironmentSelectsRasterizationMode },

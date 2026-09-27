@@ -430,6 +430,7 @@ namespace astar
     };
 
     class OccupancyGridInflator;
+    class PointRasterizer;
     class PolygonRasterizer;
 
     /**
@@ -595,6 +596,7 @@ namespace astar
 
     private:
         friend class OccupancyGridInflator;
+        friend class PointRasterizer;
         friend class PolygonRasterizer;
 
         static std::uint8_t cellValue(CellState state)
@@ -766,6 +768,35 @@ namespace astar
             worldPath.push_back(grid.geometry().cellCenterToWorld(cell));
         return worldPath;
     }
+
+    /**
+     * Paints world-coordinate obstacle points into a binary occupancy grid.
+     *
+     * The supplied geometry defines the complete rasterization boundary. Each
+     * finite point inside that boundary marks its containing cell occupied.
+     * Duplicate points are harmless. Non-finite points and points outside the
+     * geometry are ignored. No observations are retained between calls.
+     */
+    class PointRasterizer
+    {
+    public:
+        static OccupancyGrid rasterize(
+            const GridGeometry& geometry,
+            const std::vector<Point2>& obstaclePoints)
+        {
+            OccupancyGrid grid(geometry, CellState::Free);
+            for (const Point2& point : obstaclePoints)
+            {
+                const std::optional<GridCell> cell = geometry.worldToCell(point);
+                if (!cell)
+                    continue;
+                const cv::Point pixel = geometry.cellToImage(*cell);
+                grid._occupancy(pixel.y, pixel.x) =
+                    static_cast<std::uint8_t>(CellState::Occupied);
+            }
+            return grid;
+        }
+    };
 
     /**
      * Validates and paints convex world-coordinate polygons into an occupancy grid.

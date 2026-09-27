@@ -39,6 +39,7 @@ reference for learning, experimenting, and diagnosing grid-based planning.
 ## Key capabilities
 
 - Convex polygon obstacles in world coordinates
+- Arbitrary world-coordinate obstacle points rasterized into occupied cells
 - Optional convex keep-in operation area with obstacle clipping
 - OpenCV-backed binary occupancy grids and planning subgrids
 - Safety inflation in world units, including conservative grid-boundary handling
@@ -174,8 +175,8 @@ can be rasterized and searched, and data outside it cannot be used by the
 planner.
 
 The occupancy preprocessing pipeline is organized around that one shared
-geometry. Point-obstacle rasterization and occupied-union fusion are planned
-extensions; the polygon branch is the currently implemented path:
+geometry. Polygon and point rasterization are implemented; occupied-union
+fusion is the next planned extension:
 
 ```text
 Application selects planningBounds and resolution
@@ -374,6 +375,18 @@ This selects the correct initialization and painting behavior automatically.
 Without an operation area, rasterization starts with a free grid and paints
 obstacles occupied. With an operation area, it starts occupied, paints the
 operation area free, and then paints effective obstacles occupied.
+
+World-coordinate obstacle points use the same caller-selected geometry:
+
+```cpp
+const OccupancyGrid perceptionGrid = PointRasterizer::rasterize(
+    planningGeometry, obstaclePoints);
+```
+
+Each finite point inside the geometry marks its containing cell occupied.
+Duplicate points are harmless; nonfinite points and points outside the geometry
+are ignored. Every call creates a new grid, so point rasterization does not
+accumulate perception history.
 
 Rasterization follows OpenCV `fillConvexPoly` pixel coverage. It does not mark
 every cell touched by the continuous polygon geometry. Applications requiring a
@@ -651,8 +664,8 @@ options when building only the core planner and tests.
 ### Public headers
 
 - `a_star_planner.hpp` — polygon environment model
-- `occupancy_grid.hpp` — grid geometry, occupancy storage, rasterization, and
-  inflation
+- `occupancy_grid.hpp` — grid geometry, occupancy storage, polygon and point
+  rasterization, and inflation
 - `a_star_grid_planner.hpp` — search, planning results, and path simplification
 - `occupancy_grid_visualization.hpp` — OpenCV grid and search-state rendering
 - `a_star_planner_visualization.hpp` — MatPlotOpenCV environment plotting
