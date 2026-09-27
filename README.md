@@ -137,6 +137,7 @@ cmake --build build --config Release
 .\build\Release\a_star_planner_demo.exe
 .\build\Release\operation_area_demo.exe
 .\build\Release\perception_fusion_demo.exe
+.\build\Release\robot_planning_demo.exe
 ```
 
 | Demo | Shows |
@@ -144,6 +145,7 @@ cmake --build build --config Release
 | `a_star_planner_demo` | Polygon rasterization, inflation, planning, and both path forms |
 | `operation_area_demo` | Keep-in operation area, obstacle clipping, and explicit planning bounds |
 | `perception_fusion_demo` | Polygon occupancy, perception blobs, fusion, inflation, and planning |
+| `robot_planning_demo` | Robot-local bounds with an operation area, polygon obstacles, perception blobs, and planning |
 
 Add `--debug` to any demo to animate the search. An optional image filename
 saves its visualization:
@@ -151,16 +153,20 @@ saves its visualization:
 ```powershell
 .\build\Release\a_star_planner_demo.exe planner_result.png --debug
 .\build\Release\perception_fusion_demo.exe perception_pipeline.png
+.\build\Release\robot_planning_demo.exe robot_plan.png
 ```
 
-The basic demo defaults to repeatable seed `7`; the perception demo defaults to
-its fixed tutorial blobs. Both support fresh or repeatable generated layouts:
+The basic demo defaults to repeatable seed `7`; the perception and robot demos
+default to fixed tutorial blobs. All three support fresh or repeatable generated
+layouts:
 
 ```powershell
 .\build\Release\a_star_planner_demo.exe --random
 .\build\Release\a_star_planner_demo.exe --seed 42
 .\build\Release\perception_fusion_demo.exe --random
 .\build\Release\perception_fusion_demo.exe --seed 42
+.\build\Release\robot_planning_demo.exe --random
+.\build\Release\robot_planning_demo.exe --seed 42
 ```
 
 Each random run prints its seed so it can be reproduced with `--seed N`.

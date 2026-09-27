@@ -118,7 +118,14 @@ int main()
 ```
 
 The annotated programs in [`demo/`](../demo) show complete workflows with
-timing and visualization.
+timing and visualization. In particular, [`robot_planning_demo.cpp`](../demo/robot_planning_demo.cpp)
+uses `forwardSideBehind()` to build a compact grid around a robot position and
+then combines an operation area, scattered polygon obstacles, and perception
+blobs before running the normal inflation and planning pipeline. Its fixed
+tutorial blobs can be replaced with a fresh layout using `--random`, or a
+repeatable generated layout using `--seed N`. Generated layouts include blobs
+across the larger local world plus several near the nominal start-to-goal route,
+so perception changes the planning problem rather than only the background.
 
 ## Planning bounds and geometry
 
@@ -505,7 +512,7 @@ transitively includes occupancy-grid visualization.
 | CMake option | Default | Purpose |
 |---|---:|---|
 | `BUILD_TESTING` | `ON` | Build and register the test executables |
-| `ASTAR_PLANNER_BUILD_DEMO` | `ON` | Build the three tutorial demos |
+| `ASTAR_PLANNER_BUILD_DEMO` | `ON` | Build the four tutorial demos |
 | `ASTAR_PLANNER_ENABLE_VISUALIZATION` | `ON` | Enable MatPlotOpenCV and OpenCV visualization support |
 | `ASTAR_PLANNER_BUILD_BENCHMARKS` | `ON` | Build benchmark, profiling, and search-debug tools |
 
@@ -516,6 +523,7 @@ The standalone executable targets are:
 | `a_star_planner_demo` | Full-grid polygon tutorial |
 | `operation_area_demo` | Operation-area and obstacle-clipping tutorial |
 | `perception_fusion_demo` | Polygon and perception-fusion tutorial |
+| `robot_planning_demo` | Robot-local bounds and mixed-occupancy tutorial |
 | `a_star_planner_tests` | Deterministic core tests |
 | `occupancy_grid_visualization_tests` | Rendering tests |
 | `a_star_planner_benchmark` | Repeatable performance suite and CSV output |

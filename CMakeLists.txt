@@ -86,6 +86,10 @@ if(ASTAR_PLANNER_BUILD_DEMO)
         demo/perception_fusion_demo.cpp
     )
 
+    add_executable(robot_planning_demo
+        demo/robot_planning_demo.cpp
+    )
+
     target_link_libraries(a_star_planner_demo
         PRIVATE
             AStarPlanner::astar_planner_visualization
@@ -97,6 +101,12 @@ if(ASTAR_PLANNER_BUILD_DEMO)
     )
 
     target_link_libraries(perception_fusion_demo
+        PRIVATE
+            AStarPlanner::astar_occupancy_grid_visualization
+            opencv_imgcodecs
+    )
+
+    target_link_libraries(robot_planning_demo
         PRIVATE
             AStarPlanner::astar_occupancy_grid_visualization
             opencv_imgcodecs
