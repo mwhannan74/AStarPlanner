@@ -29,6 +29,7 @@ reusable environment model, occupancy grid, and working A* planner. It supports:
 - an indexed binary-heap open set with one live entry per grid cell
 - unit orthogonal and `sqrt(2)` diagonal costs with matching heuristics
 - optional diagonal corner cutting, disabled by default
+- automatic collision-checked line-of-sight path simplification
 - path cost and search-work diagnostics for every planning request
 - optional synchronous search-state callbacks for live OpenCV debugging
 - conversion of ROI-local grid paths to world-coordinate cell centers
@@ -176,6 +177,8 @@ report the final movement cost; unsuccessful searches use infinite path cost.
 updates, including the start. The indexed binary heap holds at most one live
 entry per cell, and `peakOpenSetSize` records the largest live open set. Invalid
 terminals return zero work counts because no search is started.
+`pathSimplificationMilliseconds` reports the post-search simplification time
+for successful plans and is zero when no path is produced.
 
 Set `AStarOptions::collectDetailedDiagnostics` only when investigating search
 behavior. The resulting `GridPlanResult::detailedDiagnostics` contains an
@@ -188,8 +191,18 @@ lower-cost updates to cells that were already expanded. Collection is disabled
 by default because it allocates an integer matrix and updates it during search.
 Use a separate uninstrumented request for performance timing.
 
-Successful paths include both terminal cells. Failed plans return an empty path
-and one of these statuses:
+Successful results retain two representations. `GridPlanResult::path` is the
+original graph-search result whose consecutive cells are connected neighbors.
+`GridPlanResult::simplifiedPath` is automatically derived afterward by keeping
+the farthest visible later waypoint at each step. Its segments are checked
+against the same supplied occupancy grid, so planning on a safety-inflated grid
+also checks simplified segments against that inflation. Exact cell-corner
+crossings follow `AStarOptions::preventDiagonalCornerCutting`. The standalone
+`simplifyGridPath()` function provides the same operation for other ordered
+grid paths. `pathCost` continues to describe the original graph-search path.
+
+Both successful paths include the terminal cells. Failed plans return both
+paths empty and one of these statuses:
 
 - `StartOutsideGrid` or `GoalOutsideGrid`
 - `StartOccupied` or `GoalOccupied`
@@ -306,7 +319,8 @@ without changing the planner implementation. It separately times environment
 validation and clipping, OpenCV rasterization, full-map ROI creation, one-cell
 safety inflation, terminal conversion, graph search, path conversion, and the
 corresponding preparation and per-request totals. Search results also include
-expanded nodes, generated nodes, peak open-set size, path size, and path cost.
+path-simplification time, expanded nodes, generated nodes, peak open-set size,
+original path size, simplified waypoint count, and path cost.
 
 The default deterministic suite runs open, alternating-barrier, and unreachable
 scenarios at `100 x 100`, `250 x 250`, `500 x 500`, and `1000 x 1000` cells.
@@ -395,7 +409,7 @@ The annotated demos are executable tutorials for the complete planning workflow:
   planning ROI.
 
 Both examples label the major steps in code and visualize the polygon world,
-occupancy grid, terminals, and resulting A* path.
+occupancy grid, terminals, original A* path, and simplified path.
 
 ```powershell
 .\build\Release\a_star_planner_demo.exe
@@ -412,11 +426,11 @@ from the operation area's bounding box, paints that area free, and then paints
 the effective obstacles occupied. The first demo runs A* on its complete master
 grid. The second also runs A*, but on a caller-selected ROI that
 deliberately retains the space needed to route around its obstacle walls. Both
-demos report
-grid-rasterization, safety-inflation, and planning time and display the path in
-the occupancy-grid view and the world-coordinate MatPlotOpenCV figure. Pass an optional image
-filename as the first argument to save the world-coordinate figure before its
-windows are displayed.
+demos report grid-rasterization, safety-inflation, planning, and path-
+simplification time and display both paths in the occupancy-grid view and the
+world-coordinate MatPlotOpenCV figure. Pass an optional image filename as the
+first argument to save the world-coordinate figure before its windows are
+displayed.
 
 The reported grid time begins immediately before the rasterizer call and
 excludes `PolygonEnvironment` construction, including obstacle clipping. The
@@ -566,7 +580,10 @@ int main()
 
     const std::vector<Point2> worldPath =
         gridPathToWorld(planningGrid, result.path);
-    std::cout << "Path contains " << worldPath.size() << " cell centers at cost "
+    const std::vector<Point2> simplifiedWorldPath =
+        gridPathToWorld(planningGrid, result.simplifiedPath);
+    std::cout << "Path contains " << worldPath.size() << " cell centers and "
+              << simplifiedWorldPath.size() << " simplified waypoints at cost "
               << result.diagnostics.pathCost << '\n';
     std::cout << "Expanded " << result.diagnostics.expandedNodes << " nodes\n";
     return 0;

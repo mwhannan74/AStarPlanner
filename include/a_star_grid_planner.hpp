@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -148,6 +149,8 @@ namespace astar
         std::size_t generatedNodes = 0;
         /** Largest number of live entries held by the open set at one time. */
         std::size_t peakOpenSetSize = 0;
+        /** Time spent simplifying the reconstructed path after a successful search. */
+        double pathSimplificationMilliseconds = 0.0;
     };
 
     /** Optional detailed search measurements requested through AStarOptions. */
@@ -181,7 +184,10 @@ namespace astar
     struct GridPlanResult
     {
         GridPlanStatus status = GridPlanStatus::NoPath;
+        /** Complete graph-search path containing connected grid neighbors. */
         std::vector<GridCell> path;
+        /** Collision-free line-of-sight waypoints derived from path. */
+        std::vector<GridCell> simplifiedPath;
         GridPlanDiagnostics diagnostics;
         /** Present only when collectDetailedDiagnostics is enabled. */
         std::optional<GridSearchDetailedDiagnostics> detailedDiagnostics;
@@ -211,6 +217,157 @@ namespace astar
      * be retained or transferred to another thread.
      */
     using GridSearchDebugCallback = std::function<void(const cv::Mat1b&)>;
+
+    namespace detail
+    {
+        /**
+         * Conservatively traverses every grid cell touched by a segment between
+         * two cell centers. A segment passing exactly through a cell corner is
+         * accepted only when both cells beside that corner are traversable.
+         */
+        inline bool hasGridLineOfSight(
+            const OccupancyGrid& grid,
+            const GridCell& start,
+            const GridCell& goal,
+            bool preventDiagonalCornerCutting) noexcept
+        {
+            if (!grid.isTraversable(start) || !grid.isTraversable(goal))
+                return false;
+
+            int column = start.column;
+            int row = start.row;
+            const int columnDistance = std::abs(goal.column - start.column);
+            const int rowDistance = std::abs(goal.row - start.row);
+            const int columnStep = goal.column > start.column ? 1 :
+                goal.column < start.column ? -1 : 0;
+            const int rowStep = goal.row > start.row ? 1 :
+                goal.row < start.row ? -1 : 0;
+
+            // These odd numerators represent successive boundary-crossing
+            // distances from a cell center. Integer cross-products avoid
+            // floating-point ambiguity when the segment crosses a corner.
+            std::int64_t columnCrossing = 1;
+            std::int64_t rowCrossing = 1;
+
+            while (column != goal.column || row != goal.row)
+            {
+                if (column == goal.column)
+                {
+                    row += rowStep;
+                    rowCrossing += 2;
+                }
+                else if (row == goal.row)
+                {
+                    column += columnStep;
+                    columnCrossing += 2;
+                }
+                else
+                {
+                    const std::int64_t nextColumnCrossing =
+                        columnCrossing * static_cast<std::int64_t>(rowDistance);
+                    const std::int64_t nextRowCrossing =
+                        rowCrossing * static_cast<std::int64_t>(columnDistance);
+
+                    if (nextColumnCrossing < nextRowCrossing)
+                    {
+                        column += columnStep;
+                        columnCrossing += 2;
+                    }
+                    else if (nextRowCrossing < nextColumnCrossing)
+                    {
+                        row += rowStep;
+                        rowCrossing += 2;
+                    }
+                    else
+                    {
+                        if (preventDiagonalCornerCutting &&
+                            (!grid.isTraversable(
+                                { column + columnStep, row }) ||
+                             !grid.isTraversable(
+                                { column, row + rowStep })))
+                        {
+                            return false;
+                        }
+                        column += columnStep;
+                        row += rowStep;
+                        columnCrossing += 2;
+                        rowCrossing += 2;
+                    }
+                }
+
+                if (!grid.isTraversable({ column, row }))
+                    return false;
+            }
+            return true;
+        }
+    }
+
+    /**
+     * Reduces an ordered collision-free grid path to line-of-sight waypoints.
+     *
+     * Starting at each retained waypoint, candidates are tested from the end
+     * backward so the farthest visible later path cell is retained. Collision
+     * checks use the supplied grid, which should be the same safety-inflated
+     * planning grid used for search.
+     * @param preventDiagonalCornerCutting When true, exact cell-corner
+     * crossings require both adjacent orthogonal cells to be traversable.
+     *
+     * @throws std::invalid_argument if the input is not a collision-free path
+     * through traversable cells in the supplied grid.
+     */
+    inline std::vector<GridCell> simplifyGridPath(
+        const OccupancyGrid& grid,
+        const std::vector<GridCell>& path,
+        bool preventDiagonalCornerCutting = true)
+    {
+        if (path.empty())
+            return {};
+
+        if (!grid.isTraversable(path.front()))
+        {
+            throw std::invalid_argument(
+                "simplifyGridPath: input path contains a non-traversable cell");
+        }
+        for (std::size_t index = 1; index < path.size(); ++index)
+        {
+            if (!detail::hasGridLineOfSight(
+                    grid,
+                    path[index - 1],
+                    path[index],
+                    preventDiagonalCornerCutting))
+            {
+                throw std::invalid_argument(
+                    "simplifyGridPath: input path contains a blocked segment");
+            }
+        }
+
+        std::vector<GridCell> simplifiedPath;
+        simplifiedPath.reserve(path.size());
+        simplifiedPath.push_back(path.front());
+
+        std::size_t anchor = 0;
+        while (anchor + 1 < path.size())
+        {
+            std::size_t candidate = path.size() - 1;
+            while (candidate > anchor &&
+                !detail::hasGridLineOfSight(
+                    grid,
+                    path[anchor],
+                    path[candidate],
+                    preventDiagonalCornerCutting))
+            {
+                --candidate;
+            }
+            if (candidate == anchor)
+            {
+                throw std::invalid_argument(
+                    "simplifyGridPath: input path contains a blocked segment");
+            }
+            simplifiedPath.push_back(path[candidate]);
+            anchor = candidate;
+        }
+        return simplifiedPath;
+    }
 
     /**
      * Planning entry point for an occupancy grid.
@@ -358,6 +515,17 @@ namespace astar
                     diagnostics.pathCost = current.costFromStart;
                     std::vector<GridCell> path = reconstructPath(
                         grid, parents, startIndex, goalIndex);
+                    const auto simplificationStart =
+                        std::chrono::steady_clock::now();
+                    std::vector<GridCell> simplifiedPath =
+                        simplifyGridPath(
+                            grid,
+                            path,
+                            options.preventDiagonalCornerCutting);
+                    diagnostics.pathSimplificationMilliseconds =
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() -
+                            simplificationStart).count();
                     if (debugEnabled)
                     {
                         debugCallback(debugState);
@@ -368,6 +536,7 @@ namespace astar
                     return {
                         GridPlanStatus::Success,
                         std::move(path),
+                        std::move(simplifiedPath),
                         diagnostics,
                         std::move(detailedDiagnostics)
                     };
@@ -459,6 +628,7 @@ namespace astar
                 debugCallback(debugState);
             return {
                 GridPlanStatus::NoPath,
+                {},
                 {},
                 diagnostics,
                 std::move(detailedDiagnostics)

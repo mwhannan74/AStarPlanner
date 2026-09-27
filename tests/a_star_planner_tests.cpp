@@ -46,6 +46,7 @@ namespace
     using astar::WorldBounds;
     using astar::aStarTieBreakPolicyName;
     using astar::gridPathToWorld;
+    using astar::simplifyGridPath;
 
     constexpr double TEST_EPSILON = 1e-9;
 
@@ -980,6 +981,9 @@ namespace
         requireValidFourConnectedPath(grid, result.path, { 0, 0 }, { 5, 2 });
         require(result.path.size() == 8,
             "empty-grid path should have Manhattan distance plus one cells");
+        require(result.simplifiedPath ==
+                std::vector<GridCell>{ { 0, 0 }, { 5, 2 } },
+            "an unobstructed path should simplify to its terminal cells");
         require(std::abs(result.diagnostics.pathCost - 7.0) <= TEST_EPSILON,
             "diagnostics should report the successful path's movement cost");
         require(result.diagnostics.expandedNodes > 0 &&
@@ -1001,6 +1005,8 @@ namespace
             "coincident terminals inside the grid should succeed");
         require(result.path == std::vector<GridCell>{ { 1, 2 } },
             "coincident terminals should return a one-cell path");
+        require(result.simplifiedPath == result.path,
+            "a one-cell path should remain unchanged after simplification");
         require(result.diagnostics.pathCost == 0.0 &&
                 result.diagnostics.expandedNodes == 1 &&
                 result.diagnostics.generatedNodes == 1 &&
@@ -1041,11 +1047,67 @@ namespace
     {
         const GridPlanResult result;
         require(result.status == GridPlanStatus::NoPath && result.path.empty() &&
+                result.simplifiedPath.empty() &&
                 std::isinf(result.diagnostics.pathCost) &&
                 result.diagnostics.expandedNodes == 0 &&
                 result.diagnostics.generatedNodes == 0 &&
                 result.diagnostics.peakOpenSetSize == 0,
             "default planning result should be a deterministic unsuccessful result");
+    }
+
+    void gridPathSimplificationUsesConservativeLineOfSight()
+    {
+        const OccupancyGrid freeGrid(
+            GridGeometry(Point2(0.0, 0.0), 1.0, 6, 5),
+            CellState::Free);
+        const std::vector<GridCell> stairStepPath{
+            { 0, 0 }, { 1, 0 }, { 1, 1 }, { 2, 1 },
+            { 3, 1 }, { 3, 2 }, { 4, 2 }, { 5, 3 }
+        };
+        require(simplifyGridPath(freeGrid, stairStepPath) ==
+                std::vector<GridCell>{ { 0, 0 }, { 5, 3 } },
+            "an unobstructed stair-step path should simplify to one segment");
+
+        const OccupancyGrid obstacleGrid = gridWithOccupiedCells(
+            5, 4, { { 2, 1 } });
+        const std::vector<GridCell> obstacleDetour{
+            { 0, 1 }, { 0, 2 }, { 1, 2 }, { 2, 2 },
+            { 3, 2 }, { 4, 2 }, { 4, 1 }
+        };
+        const std::vector<GridCell> simplifiedDetour =
+            simplifyGridPath(obstacleGrid, obstacleDetour);
+        require(simplifiedDetour.front() == obstacleDetour.front() &&
+                simplifiedDetour.back() == obstacleDetour.back() &&
+                simplifiedDetour.size() > 2 &&
+                simplifiedDetour.size() < obstacleDetour.size(),
+            "simplification should retain only the waypoints needed to avoid an obstacle");
+        for (std::size_t index = 1; index < simplifiedDetour.size(); ++index)
+        {
+            const std::vector<GridCell> segment{
+                simplifiedDetour[index - 1], simplifiedDetour[index]
+            };
+            require(simplifyGridPath(obstacleGrid, segment) == segment,
+                "every simplified segment should remain collision-free");
+        }
+
+        const OccupancyGrid cornerGrid = gridWithOccupiedCells(
+            3, 3, { { 1, 0 } });
+        const std::vector<GridCell> cornerDetour{
+            { 0, 0 }, { 0, 1 }, { 1, 1 }
+        };
+        require(simplifyGridPath(cornerGrid, cornerDetour) == cornerDetour,
+            "simplification should not pass diagonally beside an occupied corner");
+        require(simplifyGridPath(cornerGrid, cornerDetour, false) ==
+                std::vector<GridCell>{ { 0, 0 }, { 1, 1 } },
+            "simplification should honor an explicit corner-cutting policy");
+
+        requireThrows<std::invalid_argument>(
+            [&]
+            {
+                static_cast<void>(simplifyGridPath(
+                    cornerGrid, std::vector<GridCell>{ { 0, 0 }, { 1, 1 } }));
+            },
+            "simplification should reject an input segment that crosses an occupied corner");
     }
 
     void gridPlannerRejectsUnsupportedOptions()
@@ -1816,6 +1878,7 @@ namespace
         { "A* handles coincident terminals", aStarHandlesCoincidentTerminals },
         { "A* validates terminals", aStarValidatesTerminals },
         { "Grid plan result has safe default state", gridPlanResultHasSafeDefaultState },
+        { "Grid path simplification uses conservative line of sight", gridPathSimplificationUsesConservativeLineOfSight },
         { "Grid planner rejects unsupported options", gridPlannerRejectsUnsupportedOptions },
         { "Dijkstra matches A* optimal cost", dijkstraMatchesAStarOptimalCost },
         { "Randomized A* matches Dijkstra", randomizedAStarMatchesDijkstra },

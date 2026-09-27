@@ -21,23 +21,26 @@ namespace astar
      * @brief Visualize the retained polygon environment and terminal points.
      *
      * Draws the operation-area boundary when present, followed by obstacle
-     * polygons, an optional world-coordinate path, and the start/goal markers.
-     * When a path is supplied, the exact start and goal positions are added to
-     * its ends; grid paths normally contain cell-center positions between them.
+     * polygons, optional original and simplified world-coordinate paths, and
+     * the start/goal markers. When a path is supplied, the exact start and goal
+     * positions are added to its ends; grid paths normally contain cell-center
+     * positions between them.
      *
      * @param environment Environment to render.
      * @param start     Start query point.
      * @param goal      Goal query point.
      * @param pixelSize Figure width/height in pixels.
      * @param outputFile Optional image filename written before showing the window.
-     * @param path       Optional path in world coordinates.
+     * @param path       Optional original path in world coordinates.
+     * @param simplifiedPath Optional line-of-sight path in world coordinates.
      */
     inline void visualize(const PolygonEnvironment& environment,
         const Point2& start,
         const Point2& goal,
         int pixelSize = 1200,
         const std::string& outputFile = {},
-        const std::vector<Point2>& path = {})
+        const std::vector<Point2>& path = {},
+        const std::vector<Point2>& simplifiedPath = {})
     {
         using namespace mpocv;
 
@@ -115,15 +118,21 @@ namespace astar
         drawPolygons(
             environment.clippedObstacles(), clippedObstacleStyle, "Clipped obstacle");
 
-        if (!path.empty())
+        const auto drawPath = [&fig, &start, &goal](
+            const std::vector<Point2>& points,
+            const Color& color,
+            float thickness,
+            const std::string& label)
         {
+            if (points.empty())
+                return;
             std::vector<double> pathX;
             std::vector<double> pathY;
-            pathX.reserve(path.size() + 2);
-            pathY.reserve(path.size() + 2);
+            pathX.reserve(points.size() + 2);
+            pathY.reserve(points.size() + 2);
             pathX.push_back(start.x());
             pathY.push_back(start.y());
-            for (const Point2& point : path)
+            for (const Point2& point : points)
             {
                 pathX.push_back(point.x());
                 pathY.push_back(point.y());
@@ -133,10 +142,17 @@ namespace astar
             fig.plot(
                 std::move(pathX),
                 std::move(pathY),
-                Color(255, 140, 0),
-                2.5f,
-                "Planned path");
-        }
+                color,
+                thickness,
+                label);
+        };
+
+        drawPath(path, Color(70, 130, 180), 1.5f, "Original path");
+        drawPath(
+            simplifiedPath,
+            Color(255, 140, 0),
+            2.5f,
+            "Simplified path");
 
         // Draw query terminals last so they stay visible on top.
         fig.scatter({ start.x() }, { start.y() }, Color::Green(), 6.0f, "Start");

@@ -112,23 +112,6 @@ int main(int argc, char* argv[])
         masterGrid, safetyRadius);
     const auto inflationElapsed = Clock::now() - inflationStartTime;
 
-    std::cout << "Environment has " << environment.effectiveObstacles().size()
-              << " effective obstacles\n";
-    std::cout << "Master occupancy grid: "
-              << masterGrid.width() << " x " << masterGrid.height()
-              << " cells at " << masterGrid.geometry().resolution()
-              << " world units per cell\n";
-    std::cout << "Planning grid (full master map): "
-              << planningGrid.width() << " x " << planningGrid.height()
-              << " cells with " << safetyRadius
-              << " world units of safety inflation\n";
-    std::cout << std::fixed << std::setprecision(3)
-              << "Grid rasterization: "
-              << std::chrono::duration<double, std::milli>(gridElapsed).count()
-              << " ms\n"
-              << "Safety inflation: "
-              << std::chrono::duration<double, std::milli>(inflationElapsed).count()
-              << " ms\n";
     // 6. Convert world terminals to cells in the inflated planning grid.
     const auto startCell = planningGrid.geometry().worldToCell(start);
     const auto goalCell = planningGrid.geometry().worldToCell(goal);
@@ -185,37 +168,67 @@ int main(int argc, char* argv[])
     const GridPlanResult plan = gridPlanner.plan(
         planningGrid, *startCell, *goalCell, options, debugCallback);
     const auto planningElapsed = Clock::now() - planningStartTime;
-    std::cout << gridSearchAlgorithmName(options.algorithm);
-    if (options.algorithm == GridSearchAlgorithm::WeightedAStar)
-        std::cout << " (weight " << options.heuristicWeight << ')';
-    std::cout << " planning: "
-              << std::chrono::duration<double, std::milli>(planningElapsed).count()
-              << " ms"
-              << (debugVisualizationEnabled ? " including debug display\n" : "\n")
-              << "Tie-break: "
-              << aStarTieBreakPolicyName(options.tieBreakPolicy) << '\n'
-              << "Expanded nodes: " << plan.diagnostics.expandedNodes << '\n'
-              << "Generated nodes: " << plan.diagnostics.generatedNodes << '\n'
-              << "Peak open-set size: " << plan.diagnostics.peakOpenSetSize << '\n';
     if (!plan.succeeded())
     {
         std::cerr << "A* grid planner failed: "
                   << gridPlanStatusName(plan.status) << '\n';
         return 1;
     }
-    std::cout << "Path cost: " << plan.diagnostics.pathCost << '\n';
+
+    std::cout << '\n' << gridSearchAlgorithmName(options.algorithm);
+    if (options.algorithm == GridSearchAlgorithm::WeightedAStar)
+        std::cout << " (weight " << options.heuristicWeight << ')';
+    std::cout << " planning completed in " << std::fixed << std::setprecision(3)
+              << std::chrono::duration<double, std::milli>(planningElapsed).count()
+              << " ms"
+              << (debugVisualizationEnabled ? " including debug display\n" : "\n")
+              << "  Path cost: " << plan.diagnostics.pathCost << '\n'
+              << "  Original path: " << plan.path.size() << " cells\n"
+              << "  Simplified path: " << plan.simplifiedPath.size()
+              << " waypoints\n"
+              << "  Simplification time: "
+              << plan.diagnostics.pathSimplificationMilliseconds << " ms\n\n"
+              << "Search diagnostics\n"
+              << "  Tie-break: "
+              << aStarTieBreakPolicyName(options.tieBreakPolicy) << '\n'
+              << "  Expanded: " << plan.diagnostics.expandedNodes << '\n'
+              << "  Generated: " << plan.diagnostics.generatedNodes << '\n'
+              << "  Peak open set: " << plan.diagnostics.peakOpenSetSize << "\n\n"
+              << "Grid preparation\n"
+              << "  Effective obstacles: "
+              << environment.effectiveObstacles().size() << '\n'
+              << "  Master grid: " << masterGrid.width() << " x "
+              << masterGrid.height() << " cells at "
+              << masterGrid.geometry().resolution() << " world units/cell\n"
+              << "  Planning grid: full map, " << safetyRadius
+              << " world units of safety inflation\n"
+              << "  Rasterization: "
+              << std::chrono::duration<double, std::milli>(gridElapsed).count()
+              << " ms\n"
+              << "  Inflation: "
+              << std::chrono::duration<double, std::milli>(inflationElapsed).count()
+              << " ms\n";
     // 8. Convert cell centers back to world coordinates and render both views.
     const std::vector<Point2> worldPath = gridPathToWorld(planningGrid, plan.path);
-    visualize(environment, start, goal, 1200, outputFile, worldPath);
+    const std::vector<Point2> simplifiedWorldPath =
+        gridPathToWorld(planningGrid, plan.simplifiedPath);
+    visualize(
+        environment,
+        start,
+        goal,
+        1200,
+        outputFile,
+        worldPath,
+        simplifiedWorldPath);
 
     OccupancyGridRenderOptions gridView;
     gridView.pixelsPerCell = 8;
     gridView.paths.push_back({ plan.path, cv::Scalar(255, 120, 0), 2 });
+    gridView.paths.push_back({
+        plan.simplifiedPath, cv::Scalar(0, 140, 255), 3 });
     gridView.markers.push_back({ *startCell, cv::Scalar(0, 180, 0), 3 });
     gridView.markers.push_back({ *goalCell, cv::Scalar(0, 0, 255), 3 });
 
-    std::cout << "A* path: "
-              << plan.path.size() << " cells\n";
     showOccupancyGrid(planningGrid, gridView, "AStarPlanner Inflated Planning Grid");
 
     cv::waitKey(0);

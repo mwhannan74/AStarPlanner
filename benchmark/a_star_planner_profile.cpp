@@ -173,12 +173,14 @@ int main(int argc, char** argv)
         }
 
         std::size_t resultChecksum = 0;
+        double totalSimplificationMilliseconds = 0.0;
         const auto startTime = Clock::now();
         for (int iteration = 0; iteration < configuration.iterations; ++iteration)
         {
             const GridPlanResult result = planner.plan(grid, *start, *goal, options);
             if (result.status != expected.status ||
                 result.path != expected.path ||
+                result.simplifiedPath != expected.simplifiedPath ||
                 result.diagnostics.pathCost != expected.diagnostics.pathCost ||
                 result.diagnostics.expandedNodes !=
                     expected.diagnostics.expandedNodes ||
@@ -190,8 +192,10 @@ int main(int argc, char** argv)
                 throw std::runtime_error(
                     "profile search did not reproduce the warm-up result");
             }
-            resultChecksum += result.path.size();
+            resultChecksum += result.path.size() + result.simplifiedPath.size();
             resultChecksum ^= result.diagnostics.expandedNodes;
+            totalSimplificationMilliseconds +=
+                result.diagnostics.pathSimplificationMilliseconds;
         }
         const auto endTime = Clock::now();
         const double totalMilliseconds =
@@ -211,6 +215,11 @@ int main(int argc, char** argv)
             << "Mean planning time: "
             << totalMilliseconds /
                 static_cast<double>(configuration.iterations) << " ms\n"
+            << "Total path simplification time: "
+            << totalSimplificationMilliseconds << " ms\n"
+            << "Mean path simplification time: "
+            << totalSimplificationMilliseconds /
+                static_cast<double>(configuration.iterations) << " ms\n"
             << "Expanded nodes per plan: "
             << expected.diagnostics.expandedNodes << '\n'
             << "Generated nodes per plan: "
@@ -218,6 +227,7 @@ int main(int argc, char** argv)
             << "Peak open-set size: "
             << expected.diagnostics.peakOpenSetSize << '\n'
             << "Path cells: " << expected.path.size() << '\n'
+            << "Simplified waypoints: " << expected.simplifiedPath.size() << '\n'
             << "Path cost: " << expected.diagnostics.pathCost << '\n'
             << "Result checksum: " << resultChecksum << '\n';
         return 0;

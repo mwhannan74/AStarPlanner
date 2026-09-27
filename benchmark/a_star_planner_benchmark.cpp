@@ -68,6 +68,7 @@ namespace
     {
         std::vector<double> coordinateConversion;
         std::vector<double> search;
+        std::vector<double> pathSimplification;
         std::vector<double> pathConversion;
         std::vector<double> total;
         GridPlanResult representativeResult;
@@ -233,6 +234,8 @@ namespace
 
             const auto pathConversionStart = Clock::now();
             const std::vector<Point2> worldPath = gridPathToWorld(grid, result.path);
+            const std::vector<Point2> simplifiedWorldPath =
+                gridPathToWorld(grid, result.simplifiedPath);
             const auto pathConversionEnd = Clock::now();
 
             if (result.succeeded() != scenario.pathExpected)
@@ -248,6 +251,8 @@ namespace
                     conversionStart, conversionEnd));
                 measurements->search.push_back(elapsedMilliseconds(
                     searchStart, searchEnd));
+                measurements->pathSimplification.push_back(
+                    result.diagnostics.pathSimplificationMilliseconds);
                 measurements->pathConversion.push_back(elapsedMilliseconds(
                     pathConversionStart, pathConversionEnd));
                 measurements->total.push_back(elapsedMilliseconds(
@@ -256,7 +261,7 @@ namespace
             }
 
             // Keep the conversion observable in optimized builds.
-            return worldPath.size();
+            return worldPath.size() + simplifiedWorldPath.size();
         };
 
         static volatile std::size_t convertedPathCellSink = 0;
@@ -382,8 +387,9 @@ namespace
             << "search_repetitions,environment_median_ms,rasterization_median_ms,"
             << "roi_median_ms,inflation_median_ms,preparation_total_median_ms,"
             << "coordinate_conversion_median_ms,search_median_ms,search_p95_ms,"
-            << "path_conversion_median_ms,request_total_median_ms,success,status,"
-            << "expanded_nodes,generated_nodes,peak_open_set,path_cells,path_cost\n";
+            << "path_simplification_median_ms,path_conversion_median_ms,"
+            << "request_total_median_ms,success,status,expanded_nodes,generated_nodes,"
+            << "peak_open_set,path_cells,simplified_waypoints,path_cost\n";
     }
 
     void writeCsvRow(
@@ -413,6 +419,7 @@ namespace
             << median(search.coordinateConversion) << ','
             << median(search.search) << ','
             << percentile(search.search, 0.95) << ','
+            << median(search.pathSimplification) << ','
             << median(search.pathConversion) << ','
             << median(search.total) << ','
             << (result.succeeded() ? "true" : "false") << ','
@@ -420,7 +427,8 @@ namespace
             << result.diagnostics.expandedNodes << ','
             << result.diagnostics.generatedNodes << ','
             << result.diagnostics.peakOpenSetSize << ','
-            << result.path.size() << ',' << result.diagnostics.pathCost << '\n';
+            << result.path.size() << ',' << result.simplifiedPath.size() << ','
+            << result.diagnostics.pathCost << '\n';
     }
 }
 
@@ -490,10 +498,12 @@ int main(int argc, char** argv)
                 std::cout << "  " << std::left << std::setw(17) << "algorithm"
                           << std::right << std::setw(12) << "median ms"
                           << std::setw(11) << "p95 ms"
+                          << std::setw(13) << "simplify ms"
                           << std::setw(13) << "expanded"
                           << std::setw(13) << "generated"
                           << std::setw(11) << "peak open"
-                          << std::setw(10) << "path\n";
+                          << std::setw(12) << "path cells"
+                          << std::setw(13) << "waypoints\n";
 
                 for (const AStarOptions& options : algorithms)
                 {
@@ -510,10 +520,12 @@ int main(int argc, char** argv)
                               << std::right << std::fixed << std::setprecision(3)
                               << std::setw(12) << median(search.search)
                               << std::setw(11) << percentile(search.search, 0.95)
+                              << std::setw(13) << median(search.pathSimplification)
                               << std::setw(13) << result.diagnostics.expandedNodes
                               << std::setw(13) << result.diagnostics.generatedNodes
                               << std::setw(11) << result.diagnostics.peakOpenSetSize
-                              << std::setw(10) << result.path.size() << '\n';
+                              << std::setw(12) << result.path.size()
+                              << std::setw(13) << result.simplifiedPath.size() << '\n';
 
                     writeCsvRow(
                         csv, timestamp, size, scenario,
