@@ -126,6 +126,24 @@ tutorial blobs can be replaced with a fresh layout using `--random`, or a
 repeatable generated layout using `--seed N`. Generated layouts include blobs
 across the larger local world plus several near the nominal start-to-goal route,
 so perception changes the planning problem rather than only the background.
+They also select a goal after the fused grid is inflated. Goal candidates must
+be free, forward of the robot, sufficiently distant, and clear of the grid
+boundary. The demo does not preflight reachability; A* reports a normal failure
+if the selected free goal is disconnected from the start.
+
+<p align="center">
+  <img src="../images/robot_local_planning.png"
+       alt="Robot-local planning with polygon and perception occupancy"
+       width="600">
+</p>
+
+In this generated example, the green marker is the robot and start position,
+while the red marker is the selected free goal. The black occupancy combines
+the keep-in operation-area boundary, rectangular polygon keep-out zones,
+perception blobs, and their safety inflation. The connected A* path is blue and
+the collision-checked simplified path is orange. The larger forward region and
+randomized goal allow perception changes to produce meaningfully different
+plans between seeds.
 
 ## Planning bounds and geometry
 

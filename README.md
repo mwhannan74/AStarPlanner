@@ -157,8 +157,9 @@ saves its visualization:
 ```
 
 The basic demo defaults to repeatable seed `7`; the perception and robot demos
-default to fixed tutorial blobs. All three support fresh or repeatable generated
-layouts:
+default to fixed tutorial layouts. All three support fresh or repeatable
+generated layouts. In the robot demo, the seed controls both perception blobs
+and the goal:
 
 ```powershell
 .\build\Release\a_star_planner_demo.exe --random
@@ -171,6 +172,20 @@ layouts:
 
 Each random run prints its seed so it can be reproduced with `--seed N`.
 `--random` and `--seed N` cannot be combined.
+
+<p align="center">
+  <img src="images/robot_local_planning.png"
+       alt="Robot-local planning with polygon and perception occupancy"
+       width="600">
+</p>
+
+The robot demo places the green robot/start inside an asymmetric local planning
+region with equal forward and side distances and half as much space behind it.
+Black cells combine the operation-area boundary, inflated rectangular keep-out
+zones, and perception blobs. The blue line is the original connected A* path;
+the orange line is its collision-checked simplified path to the red goal. In a
+generated scenario, both the perception blobs and goal are controlled by the
+printed seed.
 
 <p align="center">
   <img src="images/perception_fusion_demo.png"

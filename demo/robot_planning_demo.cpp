@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
@@ -81,8 +82,8 @@ namespace
         std::uniform_real_distribution<double> pathRadius(3.0, 5.5);
 
         const Point2 start(0.5, 0.5);
-        const Point2 goal(45.5, 8.5);
-        const Point2 startToGoal = goal - start;
+        const Point2 nominalGoal(45.5, 8.5);
+        const Point2 startToGoal = nominalGoal - start;
         const Point2 pathNormal(
             -startToGoal.y() / startToGoal.norm(),
             startToGoal.x() / startToGoal.norm());
@@ -90,8 +91,8 @@ namespace
         std::vector<Point2> points;
 
         // Background blobs can appear anywhere in the usable local world.
-        // Keep them clear of the terminals so a random sample cannot make the
-        // request invalid before planning begins.
+        // Keep them clear of the robot and the nominal forward endpoint. The
+        // actual random goal is selected from free space after inflation.
         constexpr int backgroundBlobCount = 14;
         for (int blobIndex = 0; blobIndex < backgroundBlobCount;)
         {
@@ -101,7 +102,7 @@ namespace
             const double terminalClearance =
                 std::max(xRadius, yRadius) + 4.0;
             if ((center - start).norm() < terminalClearance ||
-                (center - goal).norm() < terminalClearance)
+                (center - nominalGoal).norm() < terminalClearance)
             {
                 continue;
             }
@@ -133,6 +134,53 @@ namespace
         }
         return points;
     }
+
+    std::optional<Point2> randomFreeGoal(
+        const OccupancyGrid& planningGrid,
+        const Point2& robotPosition,
+        std::uint32_t seed)
+    {
+        // Use an independent deterministic stream so goal sampling does not
+        // depend on how many random numbers blob generation consumes.
+        std::mt19937 generator(seed ^ 0x9e3779b9U);
+        std::uniform_real_distribution<double> goalX(
+            robotPosition.x() + 25.0,
+            robotPosition.x() + 46.0);
+        std::uniform_real_distribution<double> goalY(
+            robotPosition.y() - 35.0,
+            robotPosition.y() + 35.0);
+
+        constexpr int maximumAttempts = 200;
+        constexpr int boundaryClearanceCells = 4;
+        constexpr double minimumGoalDistance = 25.0;
+        for (int attempt = 0; attempt < maximumAttempts; ++attempt)
+        {
+            const Point2 sample(goalX(generator), goalY(generator));
+            const auto cell = planningGrid.geometry().worldToCell(sample);
+            if (!cell)
+                continue;
+
+            if (cell->column < boundaryClearanceCells ||
+                cell->row < boundaryClearanceCells ||
+                cell->column >=
+                    planningGrid.width() - boundaryClearanceCells ||
+                cell->row >=
+                    planningGrid.height() - boundaryClearanceCells)
+            {
+                continue;
+            }
+
+            const Point2 goal =
+                planningGrid.geometry().cellCenterToWorld(*cell);
+            if ((goal - robotPosition).norm() < minimumGoalDistance ||
+                !planningGrid.isTraversable(*cell))
+            {
+                continue;
+            }
+            return goal;
+        }
+        return std::nullopt;
+    }
 }
 
 int main(int argc, char* argv[])
@@ -143,7 +191,7 @@ int main(int argc, char* argv[])
     bool debugVisualizationEnabled = false;
     bool randomSeedRequested = false;
     bool explicitSeedProvided = false;
-    std::uint32_t perceptionSeed = 0;
+    std::uint32_t scenarioSeed = 0;
     std::string outputFile;
     for (int argumentIndex = 1; argumentIndex < argc; ++argumentIndex)
     {
@@ -164,7 +212,7 @@ int main(int argc, char* argv[])
             const auto [end, error] = std::from_chars(
                 seedArgument.data(),
                 seedArgument.data() + seedArgument.size(),
-                perceptionSeed);
+                scenarioSeed);
             if (error != std::errc{} ||
                 end != seedArgument.data() + seedArgument.size())
             {
@@ -189,7 +237,7 @@ int main(int argc, char* argv[])
         return 1;
     }
     if (randomSeedRequested)
-        perceptionSeed = std::random_device{}();
+        scenarioSeed = std::random_device{}();
 
     // 1. The application defines what "local" means for this robot. Positive
     // x is forward, negative x is behind, and y is the symmetric side extent.
@@ -253,10 +301,10 @@ int main(int argc, char* argv[])
 
     // 3. Perception-style obstacle points form irregular blobs throughout the
     // same world frame. Both occupancy sources use the exact planning geometry.
-    const bool randomizedPerception =
+    const bool randomizedScenario =
         randomSeedRequested || explicitSeedProvided;
-    const std::vector<Point2> detectedPoints = randomizedPerception
-        ? randomPerceptionPoints(perceptionSeed)
+    const std::vector<Point2> detectedPoints = randomizedScenario
+        ? randomPerceptionPoints(scenarioSeed)
         : fixedPerceptionPoints();
 
     const auto polygonStartTime = Clock::now();
@@ -281,9 +329,19 @@ int main(int argc, char* argv[])
         fusedGrid, safetyRadius);
     const auto inflationElapsed = Clock::now() - inflationStartTime;
 
-    // 5. In this example the robot position is also the start. The goal is in
-    // front of the robot and inside the selected planning horizon.
-    const Point2 goal(45.5, 8.5);
+    // 5. In this example the robot position is also the start. Generated goals
+    // are selected only after the complete inflated occupancy grid exists. A
+    // candidate must be free, forward of the robot, clear of the boundary, and
+    // sufficiently distant. Reachability is deliberately left to A* below.
+    const std::optional<Point2> selectedGoal = randomizedScenario
+        ? randomFreeGoal(planningGrid, robotPosition, scenarioSeed)
+        : std::optional<Point2>(Point2(45.5, 8.5));
+    if (!selectedGoal)
+    {
+        std::cerr << "Could not select a free random goal after 200 attempts\n";
+        return 1;
+    }
+    const Point2 goal = *selectedGoal;
     const auto startCell = planningGrid.geometry().worldToCell(robotPosition);
     const auto goalCell = planningGrid.geometry().worldToCell(goal);
     if (!startCell || !goalCell)
@@ -329,16 +387,17 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    std::cout << "\nPerception layout: ";
-    if (randomizedPerception)
-        std::cout << "generated with seed " << perceptionSeed << '\n';
+    std::cout << "\nScenario: ";
+    if (randomizedScenario)
+        std::cout << "generated with seed " << scenarioSeed << '\n';
     else
-        std::cout << "fixed tutorial blobs\n";
+        std::cout << "fixed tutorial layout\n";
 
     std::cout << "\nRobot-local planning region\n"
               << std::fixed << std::setprecision(3)
               << "  Robot/start: (" << robotPosition.x() << ", "
               << robotPosition.y() << ")\n"
+              << "  Goal: (" << goal.x() << ", " << goal.y() << ")\n"
               << "  Forward / side / behind: "
               << localRegion.forwardDistance() << " / "
               << localRegion.sideDistance() << " / "
