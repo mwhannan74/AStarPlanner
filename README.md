@@ -140,17 +140,72 @@ The main planner test executable can also be run directly:
 A normal request follows nine steps:
 
 1. Define convex obstacle polygons and, optionally, a convex operation area.
-2. Construct `PolygonEnvironment` to validate, normalize, and clip the geometry.
-3. Choose the grid resolution and master-map extent.
-4. Rasterize the environment into an `OccupancyGrid`.
-5. Plan on the complete master grid or select a planning ROI.
-6. Inflate the selected grid by the required safety radius.
+2. Select the world-coordinate `planningBounds` and grid resolution.
+3. Create `planningGeometry` covering those bounds.
+4. Construct `PolygonEnvironment` to validate, normalize, and clip the geometry.
+5. Rasterize the polygons directly into `planningGeometry`.
+6. Inflate the resulting occupancy grid by the required safety radius.
 7. Convert the world start and goal with the planning grid's `worldToCell()`.
 8. Call `AStarGridPlanner::plan()` and check `GridPlanResult::succeeded()`.
 9. Convert either returned path to world cell centers with `gridPathToWorld()`.
 
-The following example builds an operation area, inflates it, and plans across
-the complete grid:
+### Planning bounds and data inclusion
+
+The application selects `planningBounds`; the library does not infer a planning
+horizon from obstacles, terminals, a robot, or sensor range. Common choices are
+a fixed world region, operation-area bounds, start and goal with padding, or an
+application-defined local horizon.
+
+```cpp
+const WorldBounds planningBounds{
+    minimumWorldPoint,
+    maximumWorldPoint
+};
+
+const GridGeometry planningGeometry =
+    GridGeometry::covering(planningBounds, resolution);
+```
+
+`covering()` preserves `planningBounds.minimum` as the grid origin and rounds
+width and height up to whole cells. Consequently,
+`planningGeometry.worldBounds().maximum` may extend by less than one cell beyond
+the requested maximum. The resulting geometry is authoritative: data inside it
+can be rasterized and searched, and data outside it cannot be used by the
+planner.
+
+The occupancy preprocessing pipeline is organized around that one shared
+geometry. Point-obstacle rasterization and occupied-union fusion are planned
+extensions; the polygon branch is the currently implemented path:
+
+```text
+Application selects planningBounds and resolution
+                        |
+            Create planningGeometry
+                        |
+       +----------------+----------------+
+       |                                 |
+Rasterize polygons                Rasterize points
+       |                                 |
+  polygonGrid                     perceptionGrid
+       +----------------+----------------+
+                        |
+                    fusedGrid
+                        |
+              Inflate once for safety
+                        |
+                  planningGrid
+                        |
+                     Planner
+```
+
+`GridGeometry::alignedCovering()` is an advanced alternative that expands both
+ends of requested bounds onto a stable cell lattice. It is useful when changing
+requests must retain the same world-aligned cell boundaries, but it is not
+required for the normal planning-boundary workflow.
+
+The following example selects explicit planning bounds, builds an operation
+area inside them, inflates the polygon occupancy, and plans across the resulting
+grid:
 
 ```cpp
 #include "a_star_grid_planner.hpp"
@@ -176,10 +231,18 @@ int main()
     };
 
     const PolygonEnvironment environment(operationArea, obstacles);
-    const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
-        environment.operationArea(), environment.effectiveObstacles(), 0.5);
+    const WorldBounds planningBounds{
+        Point2(0.0, 0.0),
+        Point2(10.0, 10.0)
+    };
+    const GridGeometry planningGeometry =
+        GridGeometry::covering(planningBounds, 0.5);
+    const OccupancyGrid polygonGrid = PolygonRasterizer::rasterize(
+        planningGeometry,
+        environment.operationArea(),
+        environment.effectiveObstacles());
     const OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
-        masterGrid, 0.5);
+        polygonGrid, 0.5);
 
     const auto start = planningGrid.geometry().worldToCell(Point2(1.0, 1.0));
     const auto goal = planningGrid.geometry().worldToCell(Point2(9.0, 9.0));
@@ -320,11 +383,17 @@ therefore creates clearance around obstacles and a band along the grid boundary.
 This is appropriate when the edge represents unknown space, the operation-area
 boundary, or another hard planning limit.
 
-### Master grids and planning ROIs
+### Existing maps and optional subgrids
 
-A planning ROI limits the search domain; it is not merely a display crop. A
-route may exist in the master grid but require cells outside the ROI. In that
-case the ROI plan correctly returns `NoPath`.
+The default workflow selects the required planning bounds first and rasterizes
+directly into that geometry. This avoids allocating, rasterizing, fusing, and
+inflating a larger grid than the current request needs.
+
+`OccupancyGrid::subgrid()` remains useful when an application already owns a
+larger persistent map and wants to search only part of it. A subgrid limits the
+search domain; it is not merely a display crop. A route may exist in the source
+grid but require cells outside the selected region. In that case the subgrid
+plan correctly returns `NoPath`.
 
 The order of inflation and cropping changes the meaning of an ROI. Inflate the
 ROI directly when its edges are hard planning boundaries:

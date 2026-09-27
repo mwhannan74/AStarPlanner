@@ -88,6 +88,14 @@ namespace astar
                 throw std::invalid_argument("GridGeometry: world extent is not finite");
         }
 
+        /**
+         * Creates whole-cell geometry that contains the requested world bounds.
+         *
+         * The grid origin is @p bounds.minimum. Width and height are rounded up
+         * independently, so worldBounds().maximum may extend by less than one
+         * cell beyond @p bounds.maximum. The resulting worldBounds(), rather
+         * than the original request, are the authoritative grid boundary.
+         */
         static GridGeometry covering(const WorldBounds& bounds, double resolution)
         {
             validateBoundsAndResolution(bounds, resolution, "GridGeometry::covering");

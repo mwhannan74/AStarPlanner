@@ -440,13 +440,46 @@ namespace
 
     void coveringGeometryRoundsExtentUpToWholeCells()
     {
+        const WorldBounds requestedBounds{
+            Point2(-1.0, 2.0), Point2(1.1, 3.01)
+        };
         const GridGeometry geometry = GridGeometry::covering(
-            WorldBounds{ Point2(-1.0, 2.0), Point2(1.1, 3.01) }, 0.5);
+            requestedBounds, 0.5);
 
         require(geometry.width() == 5 && geometry.height() == 3,
             "covering geometry should round each extent upward");
+        require(geometry.contains(requestedBounds),
+            "covering geometry should contain all requested world bounds");
         require(pointsNear(geometry.worldMaximum(), Point2(1.5, 3.5)),
             "covering geometry should expose its snapped world maximum");
+    }
+
+    void coveringGeometryDefinesAuthoritativePlanningBoundary()
+    {
+        const WorldBounds requestedBounds{
+            Point2(0.2, 0.4), Point2(2.3, 1.6)
+        };
+        const GridGeometry geometry = GridGeometry::covering(
+            requestedBounds, 1.0);
+
+        require(pointsNear(geometry.worldOrigin(), requestedBounds.minimum) &&
+                pointsNear(geometry.worldMaximum(), Point2(3.2, 2.4)),
+            "covering geometry should expose the whole-cell planning extent");
+        require(geometry.worldToCell(Point2(2.8, 2.0)) == GridCell{ 2, 1 },
+            "whole-cell coverage beyond the requested maximum should remain inside the grid");
+        require(!geometry.worldToCell(geometry.worldMaximum()),
+            "the authoritative maximum grid boundary should remain half-open");
+
+        const OccupancyGrid grid(geometry, CellState::Free);
+        const AStarGridPlanner planner;
+        const GridPlanResult valid = planner.plan(grid, { 0, 0 }, { 2, 1 });
+        require(valid.succeeded(),
+            "the planner should use every cell in the resulting grid geometry");
+
+        const GridPlanResult invalidGoal = planner.plan(grid, { 0, 0 }, { 3, 1 });
+        require(invalidGoal.status == GridPlanStatus::GoalOutsideGrid &&
+                invalidGoal.path.empty() && invalidGoal.simplifiedPath.empty(),
+            "the planner should reject terminals beyond the resulting grid geometry");
     }
 
     void invalidGridGeometryIsRejected()
@@ -1851,6 +1884,7 @@ namespace
         { "Grid geometry converts coordinate frames", gridGeometryConvertsBetweenCoordinateFrames },
         { "Grid geometry uses half-open bounds", gridGeometryUsesHalfOpenWorldBounds },
         { "Covering geometry rounds extents up", coveringGeometryRoundsExtentUpToWholeCells },
+        { "Covering geometry defines planning boundary", coveringGeometryDefinesAuthoritativePlanningBoundary },
         { "Invalid grid geometry is rejected", invalidGridGeometryIsRejected },
         { "Aligned covering uses stable world lattice", alignedCoveringUsesStableWorldLattice },
         { "Polygon bounds size rectangular maps", polygonBoundsCanSizeRectangularMaps },
