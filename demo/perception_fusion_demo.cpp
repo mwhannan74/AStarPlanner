@@ -10,11 +10,15 @@
 
 #include <opencv2/imgcodecs.hpp>
 
+#include <charconv>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -45,6 +49,46 @@ namespace
                 }
             }
         }
+    }
+
+    std::vector<Point2> fixedPerceptionPoints()
+    {
+        std::vector<Point2> points;
+        appendEllipsePoints(points, Point2(30.5, 37.5), 4.5, 3.0);
+        appendEllipsePoints(points, Point2(49.5, 11.5), 4.0, 3.5);
+        appendEllipsePoints(points, Point2(68.5, 37.5), 3.5, 4.5);
+        appendEllipsePoints(points, Point2(72.5, 35.5), 2.5, 2.0);
+        points.emplace_back(100.0, 100.0); // Ignored: outside the grid.
+        return points;
+    }
+
+    std::vector<Point2> randomPerceptionPoints(std::uint32_t seed)
+    {
+        std::mt19937 generator(seed);
+        std::uniform_real_distribution<double> yCenter(7.5, 42.5);
+        std::uniform_real_distribution<double> xRadius(2.5, 4.5);
+        std::uniform_real_distribution<double> yRadius(2.0, 4.5);
+
+        // Place one blob in each open band between polygon walls. Positions and
+        // sizes vary, but no individual blob can span a complete passage.
+        const std::vector<std::pair<double, double>> xBands{
+            { 9.5, 14.5 },
+            { 27.5, 33.5 },
+            { 45.5, 52.5 },
+            { 64.5, 72.5 }
+        };
+
+        std::vector<Point2> points;
+        for (const auto& [minimumX, maximumX] : xBands)
+        {
+            std::uniform_real_distribution<double> xCenter(minimumX, maximumX);
+            appendEllipsePoints(
+                points,
+                Point2(xCenter(generator), yCenter(generator)),
+                xRadius(generator),
+                yRadius(generator));
+        }
+        return points;
     }
 
     cv::Mat3b renderTitledGrid(
@@ -83,21 +127,55 @@ int main(int argc, char* argv[])
     using Clock = std::chrono::steady_clock;
 
     bool debugVisualizationEnabled = false;
+    bool randomSeedRequested = false;
+    bool explicitSeedProvided = false;
+    std::uint32_t perceptionSeed = 0;
     std::string outputFile;
     for (int argumentIndex = 1; argumentIndex < argc; ++argumentIndex)
     {
         const std::string argument = argv[argumentIndex];
         if (argument == "--debug")
             debugVisualizationEnabled = true;
+        else if (argument == "--random")
+            randomSeedRequested = true;
+        else if (argument == "--seed")
+        {
+            if (++argumentIndex >= argc)
+            {
+                std::cerr << "--seed requires an unsigned integer\n";
+                return 1;
+            }
+
+            const std::string seedArgument = argv[argumentIndex];
+            const auto [end, error] = std::from_chars(
+                seedArgument.data(),
+                seedArgument.data() + seedArgument.size(),
+                perceptionSeed);
+            if (error != std::errc{} ||
+                end != seedArgument.data() + seedArgument.size())
+            {
+                std::cerr << "Invalid seed: " << seedArgument << '\n';
+                return 1;
+            }
+            explicitSeedProvided = true;
+        }
         else if (outputFile.empty())
             outputFile = argument;
         else
         {
             std::cerr
-                << "Usage: perception_fusion_demo [output-image] [--debug]\n";
+                << "Usage: perception_fusion_demo [output-image] [--debug] "
+                   "[--random | --seed N]\n";
             return 1;
         }
     }
+    if (randomSeedRequested && explicitSeedProvided)
+    {
+        std::cerr << "--random and --seed cannot be used together\n";
+        return 1;
+    }
+    if (randomSeedRequested)
+        perceptionSeed = std::random_device{}();
 
     // 1. The application selects the complete planning boundary and resolution.
     // Both occupancy sources must use this exact geometry so they describe the
@@ -130,19 +208,13 @@ int main(int argc, char* argv[])
     const PolygonEnvironment environment(obstacles);
     const auto environmentElapsed = Clock::now() - environmentStartTime;
 
-    // 3. Perception supplies world-coordinate obstacle samples. The overlapping
-    // ellipses merely generate deterministic blob-shaped point detections for the
-    // tutorial; PointRasterizer accepts any vector of world points.
-    std::vector<Point2> perceptionPoints;
-    appendEllipsePoints(
-        perceptionPoints, Point2(30.5, 37.5), 4.5, 3.0);
-    appendEllipsePoints(
-        perceptionPoints, Point2(49.5, 11.5), 4.0, 3.5);
-    appendEllipsePoints(
-        perceptionPoints, Point2(68.5, 37.5), 3.5, 4.5);
-    appendEllipsePoints(
-        perceptionPoints, Point2(72.5, 35.5), 2.5, 2.0);
-    perceptionPoints.emplace_back(100.0, 100.0); // Ignored: outside the grid.
+    // 3. Perception supplies world-coordinate obstacle samples. The default
+    // layout is fixed for the tutorial; --random and --seed N generate new blob
+    // positions and sizes. PointRasterizer accepts any vector of world points.
+    const bool randomizedPerception = randomSeedRequested || explicitSeedProvided;
+    const std::vector<Point2> perceptionPoints = randomizedPerception
+        ? randomPerceptionPoints(perceptionSeed)
+        : fixedPerceptionPoints();
 
     // 4. Rasterize both sources independently, fuse occupied cells, then apply
     // the safety margin once to the combined result.
@@ -212,7 +284,13 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    std::cout << "\nA* planning completed in " << std::fixed
+    std::cout << "\nPerception layout: ";
+    if (randomizedPerception)
+        std::cout << "generated with seed " << perceptionSeed << '\n';
+    else
+        std::cout << "fixed tutorial blobs\n";
+
+    std::cout << "A* planning completed in " << std::fixed
               << std::setprecision(3)
               << std::chrono::duration<double, std::milli>(
                      planningElapsed).count()

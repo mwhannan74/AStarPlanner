@@ -155,6 +155,23 @@ The demo prints the seed it used. To reproduce an environment created with
 `a_star_planner_demo`; they do not alter the deterministic automated tests or
 the explicitly defined environment in `operation_area_demo`.
 
+#### Perception demo randomization
+
+`perception_fusion_demo` uses its checked-in fixed blob layout by default. Use
+`--random` to generate new perception-blob positions and sizes, or `--seed N`
+to generate a specific repeatable randomized layout:
+
+```powershell
+.\build\Release\perception_fusion_demo.exe --random
+.\build\Release\perception_fusion_demo.exe --seed 42
+.\build\Release\perception_fusion_demo.exe perception_pipeline.png --seed 42
+```
+
+The polygon keep-out zones remain fixed; these options affect only perception
+blobs. The demo prints the selected seed so a `--random` run can be reproduced.
+`--random` and `--seed N` cannot be combined. Automated tests and benchmarks
+continue to use deterministic perception data.
+
 ### Run the tests
 
 ```powershell
