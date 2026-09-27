@@ -100,7 +100,7 @@ int main(int argc, char* argv[])
     // operation area, only pixels covered by obstacles become occupied.
     const auto gridStartTime = Clock::now();
     const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
-        gridGeometry, environment.effectiveObstacles());
+        gridGeometry, environment);
     const auto gridElapsed = Clock::now() - gridStartTime;
 
     // 5. Inflate obstacles and the map boundary into a separate planning grid.

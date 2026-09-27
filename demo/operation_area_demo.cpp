@@ -95,11 +95,11 @@ int main(int argc, char* argv[])
     // starts occupied, paints the operation area free, then paints obstacles.
     constexpr double gridResolution = 1.0;
     constexpr double safetyRadius = 1.0;
+    const GridGeometry masterGeometry = GridGeometry::alignedCovering(
+        environment.operationArea(), gridResolution);
     const auto gridStartTime = Clock::now();
     const OccupancyGrid masterGrid = PolygonRasterizer::rasterize(
-        environment.operationArea(),
-        environment.effectiveObstacles(),
-        gridResolution);
+        masterGeometry, environment);
     const auto gridElapsed = Clock::now() - gridStartTime;
     // 4. Select a planning ROI. This caller-selected window retains the full
     // vertical span and therefore the routes around the alternating walls.

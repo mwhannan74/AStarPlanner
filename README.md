@@ -238,9 +238,7 @@ int main()
     const GridGeometry planningGeometry =
         GridGeometry::covering(planningBounds, 0.5);
     const OccupancyGrid polygonGrid = PolygonRasterizer::rasterize(
-        planningGeometry,
-        environment.operationArea(),
-        environment.effectiveObstacles());
+        planningGeometry, environment);
     const OccupancyGrid planningGrid = OccupancyGridInflator::inflate(
         polygonGrid, 0.5);
 
@@ -364,6 +362,15 @@ and changed clipped overlays for visualization.
 
 ### Rasterization
 
+The preferred entry point accepts the caller-selected geometry and complete
+validated environment:
+
+```cpp
+const OccupancyGrid polygonGrid = PolygonRasterizer::rasterize(
+    planningGeometry, environment);
+```
+
+This selects the correct initialization and painting behavior automatically.
 Without an operation area, rasterization starts with a free grid and paints
 obstacles occupied. With an operation area, it starts occupied, paints the
 operation area free, and then paints effective obstacles occupied.

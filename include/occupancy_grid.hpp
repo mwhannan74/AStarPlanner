@@ -783,6 +783,28 @@ namespace astar
     class PolygonRasterizer
     {
     public:
+        /**
+         * Rasterizes a validated environment into caller-selected geometry.
+         *
+         * Without an operation area the grid starts free and effective
+         * obstacles are painted occupied. With an operation area the grid
+         * starts occupied, the operation area is painted free, and effective
+         * obstacles are then painted occupied.
+         */
+        static OccupancyGrid rasterize(
+            const GridGeometry& geometry,
+            const PolygonEnvironment& environment)
+        {
+            if (environment.hasOperationArea())
+            {
+                return rasterize(
+                    geometry,
+                    environment.operationArea(),
+                    environment.effectiveObstacles());
+            }
+            return rasterize(geometry, environment.effectiveObstacles());
+        }
+
         static OccupancyGrid rasterize(
             const GridGeometry& geometry,
             const std::vector<Polygon>& obstacles)

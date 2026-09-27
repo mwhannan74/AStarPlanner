@@ -835,8 +835,21 @@ namespace
             "operation-area interior cells should be free");
     }
 
-    void validatedEnvironmentFeedsMasterRasterization()
+    void validatedEnvironmentSelectsRasterizationMode()
     {
+        const GridGeometry geometry(Point2(0.0, 0.0), 1.0, 4, 4);
+        const Polygon containedObstacle{
+            Point2(1.1, 1.1), Point2(1.9, 1.1),
+            Point2(1.9, 1.9), Point2(1.1, 1.9)
+        };
+        const PolygonEnvironment unconstrainedEnvironment({ containedObstacle });
+        const OccupancyGrid unconstrainedGrid = PolygonRasterizer::rasterize(
+            geometry, unconstrainedEnvironment);
+
+        require(unconstrainedGrid.isTraversable({ 0, 0 }) &&
+                unconstrainedGrid.at({ 1, 1 }) == CellState::Occupied,
+            "an environment without an operation area should start free and paint obstacles occupied");
+
         const Polygon operationArea{
             Point2(0.0, 0.0), Point2(4.0, 0.0),
             Point2(4.0, 4.0), Point2(0.0, 4.0)
@@ -845,17 +858,23 @@ namespace
             Point2(3.0, 1.0), Point2(5.0, 1.0),
             Point2(5.0, 3.0), Point2(3.0, 3.0)
         };
-        const PolygonEnvironment planner(operationArea, { crossingObstacle });
+        const PolygonEnvironment constrainedEnvironment(
+            operationArea, { crossingObstacle });
 
-        const OccupancyGrid master = PolygonRasterizer::rasterize(
-            planner.operationArea(), planner.effectiveObstacles(), 1.0);
+        const OccupancyGrid constrainedGrid = PolygonRasterizer::rasterize(
+            geometry, constrainedEnvironment);
 
-        require(master.width() == 4 && master.height() == 4,
-            "validated operation area should determine master dimensions");
-        require(master.isTraversable({ 0, 0 }),
+        require(pointsNear(
+                    constrainedGrid.geometry().worldOrigin(),
+                    geometry.worldOrigin()) &&
+                pointsNear(
+                    constrainedGrid.geometry().worldMaximum(),
+                    geometry.worldMaximum()),
+            "environment rasterization should preserve caller-selected geometry");
+        require(constrainedGrid.isTraversable({ 0, 0 }),
             "free operation-area cells should remain traversable");
-        require(master.at({ 3, 1 }) == CellState::Occupied,
-            "clipped effective obstacle should be present in the master grid");
+        require(constrainedGrid.at({ 3, 1 }) == CellState::Occupied,
+            "clipped effective obstacles should be present in the constrained grid");
     }
 
     void subgridPreservesWorldAndMasterCoordinates()
@@ -1901,7 +1920,7 @@ namespace
         { "Obstacle overrides operation area", obstacleOverridesOperationAreaFreeSpace },
         { "Rasterization produces binary OpenCV image", rasterizationProducesBinaryOpenCvImage },
         { "Operation area builds aligned master grid", operationAreaCanBuildAlignedMasterGrid },
-        { "Validated environment feeds master rasterization", validatedEnvironmentFeedsMasterRasterization },
+        { "Validated environment selects rasterization mode", validatedEnvironmentSelectsRasterizationMode },
         { "Subgrid preserves coordinates", subgridPreservesWorldAndMasterCoordinates },
         { "Copied subgrid owns independent pixels", copiedSubgridOwnsIndependentPixels },
         { "Shared subgrid retains storage lifetime", sharedSubgridRetainsStorageLifetime },
